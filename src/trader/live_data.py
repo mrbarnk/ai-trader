@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from .data import Candle, get_closed_candles
+from .data import get_closed_candles
+from .models import Candle
 
 
 class LiveCandleProvider:

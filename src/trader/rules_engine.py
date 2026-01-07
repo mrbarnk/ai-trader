@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import math
 from typing import Literal, Protocol
 
 from . import config
@@ -67,6 +68,12 @@ class SignalOutput:
     take_profit: str | None
     tp1_price: float | None
     tp2_price: float | None
+    spread_pips: float | None
+    choc_range_pips: float | None
+    stop_distance_pips: float | None
+    account_balance: float | None
+    risk_amount: float | None
+    position_size_lots: float | None
     rules_passed: list[str]
     rules_failed: list[str]
 
@@ -91,6 +98,12 @@ class SignalEngine:
     def evaluate(self, now_utc: datetime) -> SignalOutput:
         rules_passed: list[str] = []
         rules_failed: list[str] = []
+        spread_pips: float | None = None
+        choc_range_pips: float | None = None
+        stop_distance_pips: float | None = None
+        account_balance: float | None = None
+        risk_amount: float | None = None
+        position_size_lots: float | None = None
 
         def fail(rule_id: str) -> SignalOutput:
             rules_failed.append(rule_id)
@@ -104,6 +117,12 @@ class SignalEngine:
                 take_profit=None,
                 tp1_price=None,
                 tp2_price=None,
+                spread_pips=spread_pips,
+                choc_range_pips=choc_range_pips,
+                stop_distance_pips=stop_distance_pips,
+                account_balance=account_balance,
+                risk_amount=risk_amount,
+                position_size_lots=position_size_lots,
                 rules_passed=rules_passed,
                 rules_failed=rules_failed,
             )
@@ -146,6 +165,18 @@ class SignalEngine:
         if session == "NY":
             rules_passed.append("STEP_1_NY_CONTINUATION_ONLY")
 
+        if config.ENABLE_SPREAD_FILTER:
+            try:
+                from .mt5_client import get_spread_pips
+            except Exception:
+                return fail("STEP_1_SPREAD_UNAVAILABLE")
+            spread_pips = get_spread_pips(self.symbol)
+            if spread_pips > config.MAX_SPREAD_PIPS:
+                return fail("STEP_1_SPREAD_TOO_WIDE")
+            rules_passed.append("STEP_1_SPREAD_OK")
+        else:
+            spread_pips = self._safe_spread_pips()
+
         # STEP 2 — 4H DIRECTION CHECK (BIAS)
         self._update_4h_bias(candles_4h)
         direction = self.state.bias
@@ -166,11 +197,28 @@ class SignalEngine:
         swings_15m = find_swings(candles_15m, config.SWING_LEFT, config.SWING_RIGHT)
         events_15m = find_breaks(candles_15m, swings_15m)
         desired_dir = "bear" if direction == "SELL" else "bull"
-        structure_event = latest_event(
-            events_15m, direction=desired_dir, event_types=("CHoCH",)
+        cross_level = (
+            config.PREMIUM_CROSS_LEVEL
+            if direction == "SELL"
+            else config.DISCOUNT_CROSS_LEVEL
+        )
+        cross_time = self._first_cross_time(
+            candles_15m, active_leg, cross_level, direction
+        )
+        if cross_time is None:
+            if direction == "SELL":
+                return fail("STEP_4_15M_PREMIUM_CROSS_MISSING")
+            return fail("STEP_4_15M_DISCOUNT_CROSS_MISSING")
+        if direction == "SELL":
+            rules_passed.append("STEP_4_15M_PREMIUM_CROSS_OK")
+        else:
+            rules_passed.append("STEP_4_15M_DISCOUNT_CROSS_OK")
+
+        structure_event = self._latest_event_after_time(
+            events_15m, cross_time, desired_dir, ("CHoCH",)
         )
         if structure_event is None:
-            return fail("STEP_4_15M_CHOCH_MISSING")
+            return fail("STEP_4_15M_CHOCH_AFTER_CROSS_MISSING")
 
         structure_pos = active_leg.position(structure_event.close_price)
         if structure_pos is None:
@@ -190,6 +238,7 @@ class SignalEngine:
                 return fail("STEP_4_15M_LOCATION_INVALID")
         rules_passed.append("STEP_4_15M_LOCATION_VALID")
         rules_passed.append("STEP_4_15M_CHOCH_CONFIRMED")
+        rules_passed.append("STEP_4_15M_CHOCH_AFTER_CROSS")
 
         # STEP 5 — 15M QUALITY BOOST (NOT REQUIRED)
         if direction == "SELL" and structure_pos >= 0.7:
@@ -217,6 +266,11 @@ class SignalEngine:
         if choc_event is None:
             return fail("STEP_6_5M_CHOCH_MISSING")
         rules_passed.append("STEP_6_5M_CHOCH_FOUND")
+
+        if config.ENABLE_CHOCH_RANGE_FILTER:
+            if not self._choc_range_ok(candles_5m, choc_event):
+                return fail("STEP_6_5M_CHOCH_RANGE_TOO_SMALL")
+            rules_passed.append("STEP_6_5M_CHOCH_RANGE_OK")
 
         choc_pos = active_leg.position(choc_event.close_price)
         if choc_pos is None:
@@ -255,6 +309,11 @@ class SignalEngine:
                 return fail("STEP_6_1M_CHOCH_MISSING")
             rules_passed.append("STEP_6_1M_CHOCH_FOUND")
 
+            if config.ENABLE_CHOCH_RANGE_FILTER:
+                if not self._choc_range_ok(candles_1m or [], entry_event):
+                    return fail("STEP_6_1M_CHOCH_RANGE_TOO_SMALL")
+                rules_passed.append("STEP_6_1M_CHOCH_RANGE_OK")
+
             entry_pos = active_leg.position(entry_event.close_price)
             if entry_pos is None:
                 return fail("STEP_6_1M_PULLBACK_UNDEFINED")
@@ -289,6 +348,25 @@ class SignalEngine:
             )
         rules_passed.append("STEP_7_SL_VALID")
 
+        entry_candles = candles_1m if config.USE_1M_ENTRY else candles_5m
+        choc_range_pips = self._choc_range_pips(entry_candles, entry_event)
+        if choc_range_pips is None:
+            choc_range_pips = 0.0
+
+        stop_distance_pips = abs(entry_event.close_price - stop_loss) / config.PIP_SIZE
+        if stop_distance_pips <= 0:
+            return fail("STEP_7_STOP_DISTANCE_INVALID")
+
+        if config.ENABLE_RISK_MANAGEMENT:
+            account_balance = self._resolve_account_balance()
+            if account_balance is None:
+                return fail("STEP_7_BALANCE_UNAVAILABLE")
+            risk_amount = account_balance * (config.RISK_PER_TRADE_PCT / 100)
+            position_size_lots = self._position_size_lots(stop_distance_pips, risk_amount)
+            if position_size_lots is None:
+                return fail("STEP_7_POSITION_SIZE_INVALID")
+            rules_passed.append("STEP_7_RISK_SIZING_OK")
+
         # STEP 8 — TAKE PROFIT PLAN CHECK
         entry_price = self._round_price(entry_event.close_price)
         take_profit_plan = self._validate_take_profit_plan(
@@ -312,6 +390,12 @@ class SignalEngine:
             take_profit=plan_name,
             tp1_price=tp1_price,
             tp2_price=tp2_price,
+            spread_pips=spread_pips,
+            choc_range_pips=choc_range_pips,
+            stop_distance_pips=stop_distance_pips,
+            account_balance=account_balance,
+            risk_amount=risk_amount,
+            position_size_lots=position_size_lots,
             rules_passed=rules_passed,
             rules_failed=rules_failed,
         )
@@ -405,6 +489,41 @@ class SignalEngine:
             return event
         return None
 
+    def _choc_range_pips(
+        self, candles: list[Candle], choc_event: BreakEvent
+    ) -> float | None:
+        if choc_event.index >= len(candles):
+            return None
+        candle = candles[choc_event.index]
+        return (candle.high - candle.low) / config.PIP_SIZE
+
+    def _choc_range_ok(self, candles: list[Candle], choc_event: BreakEvent) -> bool:
+        range_pips = self._choc_range_pips(candles, choc_event)
+        if range_pips is None:
+            return False
+        return range_pips >= config.MIN_CHOCH_RANGE_PIPS
+
+    def _first_cross_time(
+        self,
+        candles: list[Candle],
+        active_leg: ActiveLeg,
+        level: float,
+        direction: BiasDirection,
+    ) -> datetime | None:
+        for candle in candles:
+            if candle.time_utc < active_leg.start_time:
+                continue
+            pos = active_leg.position(candle.close)
+            if pos is None or pos < 0 or pos > 1:
+                continue
+            if direction == "SELL":
+                if pos >= level:
+                    return candle.time_utc
+            else:
+                if pos <= level:
+                    return candle.time_utc
+        return None
+
     def _entry_high(
         self,
         candles_5m: list[Candle],
@@ -452,6 +571,12 @@ class SignalEngine:
         take_profit: str | None,
         tp1_price: float | None,
         tp2_price: float | None,
+        spread_pips: float | None,
+        choc_range_pips: float | None,
+        stop_distance_pips: float | None,
+        account_balance: float | None,
+        risk_amount: float | None,
+        position_size_lots: float | None,
         rules_passed: list[str],
         rules_failed: list[str],
     ) -> SignalOutput:
@@ -466,9 +591,48 @@ class SignalEngine:
             take_profit=take_profit,
             tp1_price=tp1_price,
             tp2_price=tp2_price,
+            spread_pips=spread_pips,
+            choc_range_pips=choc_range_pips,
+            stop_distance_pips=stop_distance_pips,
+            account_balance=account_balance,
+            risk_amount=risk_amount,
+            position_size_lots=position_size_lots,
             rules_passed=rules_passed,
             rules_failed=rules_failed,
         )
 
     def _round_price(self, price: float) -> float:
         return round(price, 5)
+
+    def _safe_spread_pips(self) -> float | None:
+        try:
+            from .mt5_client import get_spread_pips
+        except Exception:
+            return None
+        try:
+            return get_spread_pips(self.symbol)
+        except Exception:
+            return None
+
+    def _resolve_account_balance(self) -> float | None:
+        if config.ACCOUNT_BALANCE_OVERRIDE is not None:
+            return float(config.ACCOUNT_BALANCE_OVERRIDE)
+        try:
+            from .mt5_client import get_account_balance
+        except Exception:
+            return None
+        try:
+            return float(get_account_balance())
+        except Exception:
+            return None
+
+    def _position_size_lots(self, stop_distance_pips: float, risk_amount: float) -> float | None:
+        if stop_distance_pips <= 0 or config.PIP_VALUE_PER_LOT <= 0:
+            return None
+        raw_lots = risk_amount / (stop_distance_pips * config.PIP_VALUE_PER_LOT)
+        if raw_lots <= 0:
+            return None
+        stepped = math.floor(raw_lots / config.LOT_STEP) * config.LOT_STEP
+        if stepped < config.MIN_LOT_SIZE or stepped > config.MAX_LOT_SIZE:
+            return None
+        return round(stepped, 4)

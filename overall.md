@@ -22,6 +22,7 @@ We are building a rule-based trading system that:
 * Does nothing when conditions are not perfect
 * Uses **completed candles only** (no intra-candle or tick-based logic)
 * Signal-only (no auto execution or order placement)
+* Optional filters: max spread and minimum CHoCH candle range (config)
 
 The system’s purpose is **selectivity**, not frequency.
 
@@ -106,6 +107,8 @@ Structure definitions (15M and 5M):
 
 ### If 4H bias is SELL:
 
+* Price must **first close into premium** at **50% or 70%** (config)
+* 15M **CHoCH** must occur **after** that premium close
 * 15M **CHoCH** **must happen in the top 50%**
 * Valid zone = **50% – 100%** of the leg
 * Strong zone = **70% – 100%**
@@ -116,6 +119,8 @@ Structure definitions (15M and 5M):
 
 ### If 4H bias is BUY:
 
+* Price must **first close into discount** at **50% or 30%** (config)
+* 15M **CHoCH** must occur **after** that discount close
 * 15M **CHoCH** **must happen in the bottom 50%**
 * Valid zone = **0% – 50%** of the leg
 * Strong zone = **0% – 30%**
@@ -145,6 +150,7 @@ Rules:
 * 5M CHoCH premium check is **optional** (config)
 * Mid-pullback or late CHoCH → **no trade**
 * CHoCH must occur after a pullback, not in consolidation
+* CHoCH candle range filter is **optional** (config)
 
 No CHoCH → no trade.
 
@@ -157,6 +163,7 @@ If enabled:
 * It must happen **inside the 15M pullback**
 * 1M CHoCH premium check is **optional** (config)
 * SL is based on the chosen entry timeframe (1M or 5M)
+* CHoCH candle range filter is **optional** (config)
 
 ---
 
@@ -194,6 +201,18 @@ If SL cannot be placed cleanly:
 * No trade
 
 No widening stops. Ever.
+
+---
+
+## 8B. RISK & POSITION SIZE
+
+Risk sizing is required:
+
+* Fixed risk per trade (config)
+* Account balance available (or override set)
+* Position size within min/max lot bounds
+
+If sizing is invalid → **NO TRADE**
 
 ---
 
@@ -268,6 +287,12 @@ The system outputs only **one structured record** with these top-level fields:
 * take_profit: PLAN_A
 * tp1_price: price (required if TRADE)
 * tp2_price: price (required if TRADE)
+* spread_pips: number (optional)
+* choc_range_pips: number (optional)
+* stop_distance_pips: number (required if TRADE)
+* account_balance: number (required if risk management enabled)
+* risk_amount: number (required if risk management enabled)
+* position_size_lots: number (required if risk management enabled)
 * rules_passed: array of rule identifiers
 * rules_failed: array of rule identifiers (empty if TRADE, non-empty if NO_TRADE)
 

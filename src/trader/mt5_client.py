@@ -32,6 +32,21 @@ def get_tick_time(symbol: str) -> int:
     return int(tick.time)
 
 
+def get_spread_pips(symbol: str) -> float:
+    tick = mt5.symbol_info_tick(symbol)
+    if tick is None:
+        raise RuntimeError(f"No tick data for {symbol}")
+    spread = tick.ask - tick.bid
+    return spread / config.PIP_SIZE
+
+
+def get_account_balance() -> float:
+    info = mt5.account_info()
+    if info is None:
+        raise RuntimeError("MT5 account info unavailable")
+    return float(info.balance)
+
+
 def get_rates(symbol: str, timeframe: int, count: int):
     rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
     if rates is None:

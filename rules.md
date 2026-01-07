@@ -31,6 +31,7 @@ If 1M is enabled but data is missing → **NO TRADE**
 * Current UTC time is within **London session (07:00–11:00)** or **early NY (12:00–14:00)** → YES / NO
 * If in early NY, 4H bias must have been **established during London** → YES / NO
 * Early NY is **continuation only**, not reversal hunting → YES / NO
+* Spread filter (optional): spread must be **<= max pips** (config) → YES / NO
 
 If **NO** to any → **NO TRADE**
 
@@ -98,6 +99,8 @@ Structure definitions (15M and 5M):
 
 ### If 4H bias = SELL:
 
+* Did price **first close into premium** at **50% or 70%** (config)? → YES / NO
+* Did 15M **CHoCH** occur **after** that premium close? → YES / NO
 * Did 15M **CHoCH** occur in **top 50% of the 4H leg**? → YES / NO
 * Structure must be within **0% – 100%** of the active 4H leg
 * Valid zone = **50% – 100%**
@@ -106,6 +109,8 @@ Structure definitions (15M and 5M):
 
 ### If 4H bias = BUY:
 
+* Did price **first close into discount** at **50% or 30%** (config)? → YES / NO
+* Did 15M **CHoCH** occur **after** that discount close? → YES / NO
 * Did 15M **CHoCH** occur in **bottom 50% of the 4H leg**? → YES / NO
 * Structure must be within **0% – 100%** of the active 4H leg
 * Valid zone = **0% – 50%**
@@ -141,6 +146,7 @@ These do **not** override Step 4, but increase confidence.
 * It must be within **0% – 100%** of the active 4H leg
 * 5M CHoCH premium check is **optional** (config)
 * Did it occur after a pullback (not in consolidation)?
+* CHoCH candle range filter (optional): **>= min pips** (config)
 
 If **any NO** → **NO TRADE**
 
@@ -154,6 +160,7 @@ If enabled:
 * It must be within **0% – 100%** of the active 4H leg
 * 1M CHoCH premium check is **optional** (config)
 * Did it occur after a pullback (not in consolidation)?
+* CHoCH candle range filter (optional): **>= min pips** (config)
 
 If **any NO** → **NO TRADE**
 
@@ -168,6 +175,16 @@ If **any NO** → **NO TRADE**
 
 If SL placement is unclear or invalid → **NO TRADE**
 No widening stops. Ever.
+
+---
+
+## STEP 7B — RISK & POSITION SIZE (REQUIRED)
+
+* Risk per trade is fixed (config) → YES / NO
+* Account balance available (or override set) → YES / NO
+* Position size is valid within min/max lot bounds → YES / NO
+
+If **any NO** → **NO TRADE**
 
 ---
 
@@ -211,6 +228,12 @@ AI output **must** be:
 * take_profit: PLAN_A
 * tp1_price: price (required if TRADE)
 * tp2_price: price (required if TRADE)
+* spread_pips: number (optional)
+* choc_range_pips: number (optional)
+* stop_distance_pips: number (required if TRADE)
+* account_balance: number (required if risk management enabled)
+* risk_amount: number (required if risk management enabled)
+* position_size_lots: number (required if risk management enabled)
 * rules_passed: array of rule identifiers
 * rules_failed: array of rule identifiers (empty if TRADE, non-empty if NO_TRADE)
 

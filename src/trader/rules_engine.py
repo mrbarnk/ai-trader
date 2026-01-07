@@ -602,7 +602,7 @@ class SignalEngine:
                     has_upper_wick
                 ])
                 
-                if weakness_count >= 2:
+                if weakness_count >= 3:
                     return True, candle.time_utc
             
             else:  # BUY
@@ -627,7 +627,7 @@ class SignalEngine:
                     has_lower_wick
                 ])
                 
-                if weakness_count >= 2:
+                if weakness_count >= 3:
                     return True, candle.time_utc
         
         return False, None

@@ -57,9 +57,9 @@ def find_breaks(candles: list[Candle], swings: list[SwingPoint]) -> list[BreakEv
     """
     swings_by_index = {s.index: s for s in swings}
     
-    # CHANGED: Track ALL unbroken swings, not just last one
-    unbroken_highs: list[SwingPoint] = []  # All highs not yet broken
-    unbroken_lows: list[SwingPoint] = []   # All lows not yet broken
+    # Track ALL unbroken swings
+    unbroken_highs: list[SwingPoint] = []
+    unbroken_lows: list[SwingPoint] = []
     
     last_swing_high_seen: SwingPoint | None = None
     last_swing_low_seen: SwingPoint | None = None
@@ -67,23 +67,21 @@ def find_breaks(candles: list[Candle], swings: list[SwingPoint]) -> list[BreakEv
     
     # Track trend for CHoCH vs BOS
     current_trend: BreakDirection | None = None
-    last_structure_high: float | None = None
-    last_structure_low: float | None = None
 
     for i, candle in enumerate(candles):
         swing = swings_by_index.get(i)
         if swing:
             if swing.kind == "high":
-                unbroken_highs.append(swing)  # Add to unbroken list
+                unbroken_highs.append(swing)
                 last_swing_high_seen = swing
             else:
-                unbroken_lows.append(swing)   # Add to unbroken list
+                unbroken_lows.append(swing)
                 last_swing_low_seen = swing
 
-        # CHANGED: Check if we break ANY unbroken high (bull break)
+        # Check if we break ANY unbroken high (bull break)
         broken_highs = [h for h in unbroken_highs if candle.close > h.price]
         if broken_highs:
-            # Take the highest one broken (strongest break)
+            # Take the highest one broken
             highest_broken = max(broken_highs, key=lambda h: h.price)
             
             # Determine event type
@@ -114,13 +112,13 @@ def find_breaks(candles: list[Candle], swings: list[SwingPoint]) -> list[BreakEv
                 )
             )
             
-            # Remove all broken highs from unbroken list
-            unbroken_highs = [h for h in unbroken_highs if h.price >= highest_broken.price]
+            # FIXED: Remove broken high AND all below it
+            unbroken_highs = [h for h in unbroken_highs if h.price > highest_broken.price]
 
-        # CHANGED: Check if we break ANY unbroken low (bear break)
+        # Check if we break ANY unbroken low (bear break)
         broken_lows = [l for l in unbroken_lows if candle.close < l.price]
         if broken_lows:
-            # Take the lowest one broken (strongest break)
+            # Take the lowest one broken
             lowest_broken = min(broken_lows, key=lambda l: l.price)
             
             # Determine event type
@@ -151,8 +149,8 @@ def find_breaks(candles: list[Candle], swings: list[SwingPoint]) -> list[BreakEv
                 )
             )
             
-            # Remove all broken lows from unbroken list
-            unbroken_lows = [l for l in unbroken_lows if l.price <= lowest_broken.price]
+            # FIXED: Remove broken low AND all above it
+            unbroken_lows = [l for l in unbroken_lows if l.price < lowest_broken.price]
 
     return breaks
 

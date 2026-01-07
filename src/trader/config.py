@@ -26,12 +26,12 @@ NY_START_UTC = time(12, 0)
 NY_END_UTC = time(14, 0)
 
 # FIXED: Enable 1M entry for sells to get better entries
-USE_1M_ENTRY = True
+USE_1M_ENTRY = False
 REQUIRE_1M_CHOCH_PREMIUM = True
 REQUIRE_5M_CHOCH_PREMIUM = True
 
 # FIXED: Enable 1M entry for sells (was False, now True)
-ENABLE_1M_ENTRY_SELL = True
+ENABLE_1M_ENTRY_SELL = False
 
 # FIXED: Don't require premium on 5M for sells - too restrictive
 REQUIRE_5M_CHOCH_PREMIUM_SELL = False
@@ -43,7 +43,7 @@ PREMIUM_CROSS_LEVEL = 0.75  # Need to reach 75%+ of leg initially
 DISCOUNT_CROSS_LEVEL = 0.25  # Need to reach 25%- of leg initially
 
 ENABLE_SPREAD_FILTER = False
-MAX_SPREAD_PIPS = 4.0
+MAX_SPREAD_PIPS = 2.0
 ASSUME_ZERO_SPREAD = False  # Account for spread in backtest
 
 # FIXED: Increase SL buffer to account for spread and slippage in backtest
@@ -59,7 +59,7 @@ ENABLE_CHOCH_RANGE_FILTER = False
 MIN_CHOCH_RANGE_PIPS = 6.0
 
 ENABLE_RISK_MANAGEMENT = True
-RISK_PER_TRADE_PCT = 1.0
+RISK_PER_TRADE_PCT = 1
 ACCOUNT_BALANCE_OVERRIDE = 10000.0
 PIP_VALUE_PER_LOT = 10.0
 MIN_LOT_SIZE = 0.01

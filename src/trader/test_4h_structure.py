@@ -1,4 +1,5 @@
 # test_ibos_detection.py
+from argparse import ArgumentParser
 from datetime import datetime
 from pathlib import Path
 import sys
@@ -12,13 +13,20 @@ from trader.structure import find_swings, find_breaks
 from trader import config
 from trader.timeframes import TIMEFRAME_SECONDS, TIMEFRAME_H4
 
+parser = ArgumentParser(description="Inspect 4H structure for a date range.")
+parser.add_argument("--csv", type=Path, default=ROOT / "data" / "gu_1m.csv")
+parser.add_argument("--source-minutes", type=int, default=1)
+parser.add_argument("--start", type=str, default="2025-10-01")
+parser.add_argument("--end", type=str, default="2025-11-30")
+args = parser.parse_args()
+
 # Load data
-csv_path = ROOT / "data" / "gu_1m.csv"
+csv_path = args.csv
 candles = load_csv_candles(csv_path)
 
-# Filter to your test range (Oct + Nov for more data)
-start = datetime(2025, 10, 1)
-end = datetime(2025, 11, 30, 23, 59, 59)
+# Filter to your test range
+start = datetime.fromisoformat(args.start)
+end = datetime.fromisoformat(args.end)
 candles = [c for c in candles if start <= c.time_utc <= end]
 
 print(f"Loaded {len(candles)} 1M candles")
@@ -27,10 +35,11 @@ if not candles:
 print(f"Date range: {candles[0].time_utc} to {candles[-1].time_utc}")
 
 # Resample to 4H
+source_seconds = args.source_minutes * 60
 candles_4h = resample_candles(
-    candles, 
-    60,  # 1-minute source
-    TIMEFRAME_SECONDS[TIMEFRAME_H4]
+    candles,
+    source_seconds,
+    TIMEFRAME_SECONDS[TIMEFRAME_H4],
 )
 
 print(f"\n4H candles: {len(candles_4h)}")

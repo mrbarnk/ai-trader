@@ -47,6 +47,8 @@ class DailyRiskManager:
             'consecutive_losses': 0,
             'total_wins': 0,
             'total_trades': 0,
+            'buy_trades': 0,
+            'sell_trades': 0,
             'daily_pnl': 0.0,
             'daily_r': 0.0,
             'stopped': False,
@@ -66,6 +68,8 @@ class DailyRiskManager:
                 'consecutive_losses': 0,
                 'total_wins': 0,
                 'total_trades': 0,
+                'buy_trades': 0,
+                'sell_trades': 0,
                 'daily_pnl': 0.0,
                 'daily_r': 0.0,
                 'stopped': False,
@@ -160,7 +164,8 @@ class DailyRiskManager:
         current_date: date, 
         pnl: float,
         r_result: float,
-        current_balance: float  # ✅ ADDED: Pass actual balance
+        current_balance: float,  # ✅ ADDED: Pass actual balance
+        direction: str,
     ):
         """
         FIXED: Update daily statistics after trade closes with real balance
@@ -177,6 +182,10 @@ class DailyRiskManager:
         stats['daily_pnl'] += pnl
         stats['daily_r'] += r_result
         stats['current_balance'] = current_balance  # ✅ FIXED: Update to actual balance
+        if direction == "BUY":
+            stats['buy_trades'] += 1
+        elif direction == "SELL":
+            stats['sell_trades'] += 1
         
         if r_result < -0.1:  # Loss (small buffer for BE with tiny loss)
             stats['total_losses'] += 1
@@ -196,6 +205,8 @@ class DailyRiskManager:
             'trades': stats['total_trades'],
             'wins': stats['total_wins'],
             'losses': stats['total_losses'],
+            'buy_trades': stats['buy_trades'],
+            'sell_trades': stats['sell_trades'],
             'consecutive_losses': stats['consecutive_losses'],
             'daily_pnl': round(stats['daily_pnl'], 2),
             'daily_r': round(stats['daily_r'], 2),
@@ -216,7 +227,7 @@ class DailyRiskManager:
         lines.append("DAILY RISK MANAGEMENT SUMMARY")
         lines.append("="*100)
         lines.append(
-            f"{'Date':<12} {'Trades':>7} {'W/L':>7} {'Start Bal':>12} "
+            f"{'Date':<12} {'Trades':>7} {'B/S':>7} {'W/L':>7} {'Start Bal':>12} "
             f"{'End Bal':>12} {'Daily P&L':>12} {'Daily %':>9} "
             f"{'R-Multiple':>11} {'Status':<50}"
         )
@@ -241,8 +252,9 @@ class DailyRiskManager:
             else:
                 status = "✓ Active"
             
+            bs = f"{stats['buy_trades']}/{stats['sell_trades']}"
             lines.append(
-                f"{day!s:<12} {stats['total_trades']:>7} {w_l:>7} "
+                f"{day!s:<12} {stats['total_trades']:>7} {bs:>7} {w_l:>7} "
                 f"${stats['starting_balance']:>10.2f} ${stats['current_balance']:>10.2f} "
                 f"${stats['daily_pnl']:>10.2f} {drawdown_pct:>8.2f}% "
                 f"{stats['daily_r']:>10.2f}R {status:<50}"
@@ -524,6 +536,21 @@ def build_series(candles: list[Candle], timeframe: int) -> TimeframeSeries:
     return TimeframeSeries(timeframe=timeframe, candles=candles, close_times=close_times)
 
 
+def trade_identity(record: dict) -> tuple:
+    def round_price(value: float | None) -> float | None:
+        if value is None:
+            return None
+        return round(float(value), 5)
+
+    return (
+        record.get("direction"),
+        round_price(record.get("entry")),
+        round_price(record.get("stop_loss")),
+        round_price(record.get("tp1_price")),
+        round_price(record.get("tp2_price")),
+    )
+
+
 def run_backtest(
     csv_path: Path,
     source_minutes: int,
@@ -596,6 +623,7 @@ def run_backtest(
     
     # Track open trades
     open_trades = []
+    seen_trade_keys: set[tuple] = set()
     
     # ✅ Main loop with FIXED risk management
     for i, candle in enumerate(step_candles):
@@ -673,7 +701,8 @@ def run_backtest(
                     current_date, 
                     pnl, 
                     r_multiple,
-                    current_balance  # ✅ Pass actual balance
+                    current_balance,
+                    direction,
                 )
                 
                 # Store results
@@ -719,6 +748,19 @@ def run_backtest(
         logger.log(signal)
         
         if signal.decision == "TRADE":
+            signal_key = trade_identity(
+                {
+                    "direction": signal.direction,
+                    "entry": signal.entry,
+                    "stop_loss": signal.stop_loss,
+                    "tp1_price": signal.tp1_price,
+                    "tp2_price": signal.tp2_price,
+                }
+            )
+            if signal_key in seen_trade_keys:
+                continue
+            if any(trade_identity(trade) == signal_key for trade in open_trades):
+                continue
             # ✅ Calculate position size based on current balance
             position_size = calculate_position_size(
                 balance=current_balance,
@@ -735,6 +777,7 @@ def run_backtest(
             record['balance_before'] = current_balance
             record['position_size_lots'] = position_size  # ✅ Store calculated size
             open_trades.append(record)
+            seen_trade_keys.add(signal_key)
     
     # Print summary
     total_pnl = current_balance - starting_balance

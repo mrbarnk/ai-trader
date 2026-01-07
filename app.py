@@ -1,0 +1,160 @@
+from __future__ import annotations
+
+import hmac
+import json
+import os
+import sys
+import tempfile
+from datetime import timedelta
+from pathlib import Path
+from typing import Any
+
+from flask import Flask, Response, Request, request
+
+
+BASE_DIR = Path(__file__).resolve().parent
+sys.path.append(str(BASE_DIR / "src"))
+
+from trader.backtest import load_csv_candles, run_backtest  # noqa: E402
+from trader import config  # noqa: E402
+
+
+APP_USERNAME = os.getenv("APP_USERNAME")
+APP_PASSWORD = os.getenv("APP_PASSWORD")
+
+MAX_CSV_BYTES = 10 * 1024 * 1024
+MAX_CANDLES = 50_000
+MAX_RANGE_DAYS = 31
+
+app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = MAX_CSV_BYTES
+
+VIEWER_HTML = (BASE_DIR / "backtest_viewer.html").read_text(encoding="utf-8")
+
+
+def _check_auth(req: Request) -> bool:
+    if not APP_USERNAME or not APP_PASSWORD:
+        return False
+    auth = req.authorization
+    if auth is None:
+        return False
+    return hmac.compare_digest(auth.username, APP_USERNAME) and hmac.compare_digest(
+        auth.password, APP_PASSWORD
+    )
+
+
+def _require_auth() -> Response | None:
+    if _check_auth(request):
+        return None
+    return Response(
+        "Authentication required.",
+        401,
+        {"WWW-Authenticate": 'Basic realm="Backtest Login"'},
+    )
+
+
+@app.before_request
+def enforce_basic_auth() -> Response | None:
+    return _require_auth()
+
+
+def _render_error(message: str, status_code: int = 400) -> Response:
+    html = f"""
+    <html lang="en">
+      <head><meta charset="utf-8"><title>Backtest Error</title></head>
+      <body style="font-family:Arial,sans-serif;padding:24px;">
+        <h2>Upload Error</h2>
+        <p>{message}</p>
+        <p><a href="/">Back to upload</a></p>
+      </body>
+    </html>
+    """
+    return Response(html, status=status_code, mimetype="text/html")
+
+
+def _load_rows(jsonl_path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with jsonl_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                rows.append(json.loads(line))
+    return rows
+
+
+def _render_viewer(rows: list[dict[str, Any]]) -> Response:
+    payload = json.dumps(rows)
+    injection = (
+        f"<script>window.PRELOADED_ROWS = {payload};"
+        "window.__applyPreloadedRows && window.__applyPreloadedRows(window.PRELOADED_ROWS);"
+        "</script>"
+    )
+    html = VIEWER_HTML.replace("</body>", f"{injection}\n</body>")
+    return Response(html, mimetype="text/html")
+
+
+def _validate_candles(csv_path: Path) -> str | None:
+    candles = load_csv_candles(csv_path)
+    if not candles:
+        return "CSV is empty after parsing."
+    if len(candles) > MAX_CANDLES:
+        return f"CSV has {len(candles)} candles; max allowed is {MAX_CANDLES}."
+    span = candles[-1].time_utc - candles[0].time_utc
+    if span > timedelta(days=MAX_RANGE_DAYS):
+        return f"CSV spans {span.days} days; max allowed is {MAX_RANGE_DAYS}."
+    return None
+
+
+@app.route("/", methods=["GET"])
+def index() -> Response:
+    html = """
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <title>GU Backtest Upload</title>
+      </head>
+      <body style="font-family:Arial,sans-serif;padding:24px;">
+        <h2>Upload 1M CSV (Max 1 Month)</h2>
+        <form action="/run" method="post" enctype="multipart/form-data">
+          <input type="file" name="csv" accept=".csv,.txt" required />
+          <button type="submit">Run Backtest</button>
+        </form>
+        <p>Files are processed in memory and deleted immediately after results render.</p>
+      </body>
+    </html>
+    """
+    return Response(html, mimetype="text/html")
+
+
+@app.route("/run", methods=["POST"])
+def run() -> Response:
+    upload = request.files.get("csv")
+    if not upload or upload.filename == "":
+        return _render_error("No CSV file uploaded.")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        csv_path = Path(tmpdir) / "upload.csv"
+        upload.save(csv_path)
+
+        error = _validate_candles(csv_path)
+        if error:
+            return _render_error(error)
+
+        output_path = Path(tmpdir) / "signals.jsonl"
+
+        original_log_setting = config.LOG_DAILY_LIMITS
+        config.LOG_DAILY_LIMITS = False
+        try:
+            run_backtest(csv_path, source_minutes=1, output_path=output_path, start=None, end=None)
+        finally:
+            config.LOG_DAILY_LIMITS = original_log_setting
+
+        outcome_path = output_path.with_name(output_path.stem + "_outcomes.jsonl")
+        rows = _load_rows(outcome_path)
+
+    return _render_viewer(rows)
+
+
+if __name__ == "__main__":
+    if not APP_USERNAME or not APP_PASSWORD:
+        raise SystemExit("Set APP_USERNAME and APP_PASSWORD before running the server.")
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=False)

@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: ai-trader-backtest
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: APP_USERNAME
+        sync: false
+      - key: APP_PASSWORD
+        sync: false

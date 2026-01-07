@@ -345,6 +345,7 @@
       const showTrade = document.getElementById("showTrade");
       const showBuy = document.getElementById("showBuy");
       const showSell = document.getElementById("showSell");
+      const DEFAULT_PIP_SIZE = 0.0001;
 
       let rows = [];
 
@@ -477,13 +478,45 @@
         const entry = Number(row.entry);
         const stop = Number(row.stop_loss);
         const direction = row.direction;
+        const closedOutcomes = [
+          "SL_HIT",
+          "TP2_HIT",
+          "TP1_THEN_TP2",
+          "TP1_THEN_SL",
+          "TP1_THEN_BE",
+        ];
+        const isClosed = closedOutcomes.includes(outcome);
+
+        const loggedR =
+          typeof row.r_multiple === "number" && !Number.isNaN(row.r_multiple)
+            ? row.r_multiple
+            : null;
+        const loggedMoney =
+          typeof row.pnl === "number" && !Number.isNaN(row.pnl) ? row.pnl : null;
+        if (loggedR !== null || loggedMoney !== null) {
+          const balance =
+            typeof row.balance_before === "number" && !Number.isNaN(row.balance_before)
+              ? row.balance_before
+              : typeof row.account_balance === "number" && !Number.isNaN(row.account_balance)
+                ? row.account_balance
+                : null;
+          const percent =
+            loggedMoney !== null && balance ? (loggedMoney / balance) * 100 : null;
+          return { r: loggedR, money: loggedMoney, percent, closed: isClosed };
+        }
 
         if (!outcome || !direction || Number.isNaN(entry) || Number.isNaN(stop)) {
           return { r: null, money: null, closed: false };
         }
 
-        const riskDistance = Math.abs(entry - stop);
-        if (!riskDistance) {
+        let riskPips =
+          typeof row.stop_distance_pips === "number" && !Number.isNaN(row.stop_distance_pips)
+            ? row.stop_distance_pips
+            : null;
+        if (riskPips === null) {
+          riskPips = Math.abs(entry - stop) / DEFAULT_PIP_SIZE;
+        }
+        if (!riskPips) {
           return { r: null, money: null, closed: false };
         }
 
@@ -493,13 +526,13 @@
         const tp2Valid = !Number.isNaN(tp2);
         const r1 = tp1Valid
           ? direction === "BUY"
-            ? (tp1 - entry) / riskDistance
-            : (entry - tp1) / riskDistance
+            ? (tp1 - entry) / DEFAULT_PIP_SIZE / riskPips
+            : (entry - tp1) / DEFAULT_PIP_SIZE / riskPips
           : null;
         const r2 = tp2Valid
           ? direction === "BUY"
-            ? (tp2 - entry) / riskDistance
-            : (entry - tp2) / riskDistance
+            ? (tp2 - entry) / DEFAULT_PIP_SIZE / riskPips
+            : (entry - tp2) / DEFAULT_PIP_SIZE / riskPips
           : null;
 
         let rMultiple = null;
@@ -599,23 +632,18 @@
           return { slPips: null, tp1Pips: null, tp2Pips: null };
         }
 
-        let stopPips = Number(row.stop_distance_pips);
-        if (Number.isNaN(stopPips) || stopPips <= 0) {
-          stopPips = null;
+        let slPips = Number(row.stop_distance_pips);
+        if (Number.isNaN(slPips) || slPips <= 0) {
+          slPips = Math.abs(entry - stop) / DEFAULT_PIP_SIZE;
         }
-
-        let pipSize = null;
-        if (stopPips && Math.abs(entry - stop) > 0) {
-          pipSize = Math.abs(entry - stop) / stopPips;
-        } else {
-          pipSize = 0.0001;
-        }
-
-        const slPips = stopPips ?? Math.abs(entry - stop) / pipSize;
         const tp1 = Number(row.tp1_price);
         const tp2 = Number(row.tp2_price);
-        const tp1Pips = Number.isNaN(tp1) ? null : Math.abs(tp1 - entry) / pipSize;
-        const tp2Pips = Number.isNaN(tp2) ? null : Math.abs(tp2 - entry) / pipSize;
+        const tp1Pips = Number.isNaN(tp1)
+          ? null
+          : Math.abs(tp1 - entry) / DEFAULT_PIP_SIZE;
+        const tp2Pips = Number.isNaN(tp2)
+          ? null
+          : Math.abs(tp2 - entry) / DEFAULT_PIP_SIZE;
 
         return { slPips, tp1Pips, tp2Pips };
       }
@@ -836,6 +864,19 @@
       showTrade.addEventListener("change", updateView);
       showBuy.addEventListener("change", updateView);
       showSell.addEventListener("change", updateView);
+
+      function applyPreloadedRows(preloaded) {
+        rows = preloaded;
+        fileInput.disabled = true;
+        fileInput.style.display = "none";
+        fileMeta.textContent = `Loaded ${rows.length} records`;
+        updateView();
+      }
+
+      window.__applyPreloadedRows = applyPreloadedRows;
+      if (Array.isArray(window.PRELOADED_ROWS)) {
+        applyPreloadedRows(window.PRELOADED_ROWS);
+      }
     </script>
   </body>
 </html>

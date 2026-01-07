@@ -40,3 +40,17 @@ PYTHONPATH=src python -m trader.backtest data/gu_1m.csv \
 
 - `backtest_viewer.html`: load `logs/backtest_signals_outcomes.jsonl` to inspect outcomes, P/L, and win rates.
 - `backtest_chart.html`: load your CSV + outcomes JSONL to see a 5M chart with trade markers.
+
+## Hosted upload (Render)
+
+The upload app is in `app.py`. It enforces basic auth, 1-month max CSVs, and deletes uploads immediately.
+
+Local run:
+
+```bash
+APP_USERNAME=demo APP_PASSWORD=demo PYTHONPATH=src python app.py
+```
+
+Render:
+- Use `render.yaml`
+- Set `APP_USERNAME` and `APP_PASSWORD` in Render environment variables

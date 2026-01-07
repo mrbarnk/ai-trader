@@ -9,7 +9,7 @@ from . import config
 from .models import Candle
 from .structure import BreakEvent, BreakDirection, find_breaks, find_swings, has_liquidity_sweep
 from .time_utils import session_from_utc
-from .timeframes import TIMEFRAME_H4, TIMEFRAME_M15, TIMEFRAME_M5, TIMEFRAME_M1
+from .timeframes import TIMEFRAME_H4, TIMEFRAME_M15, TIMEFRAME_M5, TIMEFRAME_M1, TIMEFRAME_D1
 
 
 BiasDirection = Literal["BUY", "SELL"]
@@ -88,6 +88,7 @@ class SignalOutput:
     take_profit: str | None
     tp1_price: float | None
     tp2_price: float | None
+    tp3_price: float | None
     spread_pips: float | None
     choc_range_pips: float | None
     stop_distance_pips: float | None
@@ -123,6 +124,7 @@ class SignalEngine:
         account_balance: float | None = None
         risk_amount: float | None = None
         position_size_lots: float | None = None
+        tp3_price: float | None = None
 
         def fail(rule_id: str) -> SignalOutput:
             rules_failed.append(rule_id)
@@ -136,6 +138,7 @@ class SignalEngine:
                 take_profit=None,
                 tp1_price=None,
                 tp2_price=None,
+                tp3_price=None,
                 spread_pips=spread_pips,
                 choc_range_pips=choc_range_pips,
                 stop_distance_pips=stop_distance_pips,
@@ -164,11 +167,18 @@ class SignalEngine:
             candles_1m, _dropped_1m = self.candle_provider.get_closed_candles(
                 self.symbol, TIMEFRAME_M1, now_utc
             )
+        candles_d1: list[Candle] | None = None
+        if config.TP3_ENABLED and config.TP3_LEG_SOURCE == "D1":
+            candles_d1, _dropped_d1 = self.candle_provider.get_closed_candles(
+                self.symbol, TIMEFRAME_D1, now_utc
+            )
 
         if not candles_4h or not candles_15m or not candles_5m:
             return fail("STEP_0_CANDLES_READY")
         if config.USE_1M_ENTRY and not candles_1m:
             return fail("STEP_0_1M_CANDLES_READY")
+        if config.TP3_ENABLED and config.TP3_LEG_SOURCE == "D1" and not candles_d1:
+            return fail("STEP_0_D1_CANDLES_READY")
         rules_passed.append("STEP_0_COMPLETED_CANDLES_ONLY")
 
         # STEP 1 — ASSET & SESSION CHECK
@@ -433,6 +443,22 @@ class SignalEngine:
         plan_name, tp1_price, tp2_price = take_profit_plan
         rules_passed.append("STEP_8_TP_PLAN_DEFINED")
 
+        if config.TP3_ENABLED:
+            tp3_leg = self._resolve_tp3_leg(
+                active_leg, structure_event, candles_15m, candles_d1, direction
+            )
+            if tp3_leg is None:
+                if config.TP3_LEG_FALLBACK_TO_4H:
+                    tp3_leg = active_leg
+                    rules_passed.append("STEP_8_TP3_LEG_FALLBACK_4H")
+                else:
+                    return fail("STEP_8_TP3_LEG_MISSING")
+            tp3_price = self._leg_target_price(direction, tp3_leg, config.TP3_LEG_PERCENT)
+            if tp3_price is None:
+                return fail("STEP_8_TP3_INVALID")
+            tp3_price = self._round_price(tp3_price)
+            rules_passed.append("STEP_8_TP3_DEFINED")
+
         # STEP 9 — FINAL CONSISTENCY CHECK
         rules_passed.append("STEP_9_FINAL_CONSISTENCY")
 
@@ -449,6 +475,7 @@ class SignalEngine:
             take_profit=plan_name,
             tp1_price=tp1_price,
             tp2_price=tp2_price,
+            tp3_price=tp3_price,
             spread_pips=spread_pips,
             choc_range_pips=choc_range_pips,
             stop_distance_pips=stop_distance_pips,
@@ -761,6 +788,58 @@ class SignalEngine:
             end_time=structure_event.time_utc,
         )
 
+    def _resolve_tp3_leg(
+        self,
+        active_leg: ActiveLeg,
+        structure_event: BreakEvent | None,
+        candles_15m: list[Candle],
+        candles_d1: list[Candle] | None,
+        direction: BiasDirection,
+    ) -> ActiveLeg | None:
+        if config.TP3_LEG_SOURCE == "4H":
+            return active_leg
+        if config.TP3_LEG_SOURCE == "15M":
+            return self._resolve_tp_leg(active_leg, structure_event, candles_15m, direction)
+        if config.TP3_LEG_SOURCE != "D1":
+            return None
+        if not candles_d1:
+            return None
+        swings_d1 = find_swings(candles_d1, config.SWING_LEFT_4H, config.SWING_RIGHT_4H)
+        events_d1 = find_breaks(candles_d1, swings_d1)
+        desired_dir = "bear" if direction == "SELL" else "bull"
+        for event in reversed(events_d1):
+            if event.direction != desired_dir:
+                continue
+            if event.defining_swing_price is None:
+                continue
+            start_time = (
+                candles_d1[event.defining_swing_index].time_utc
+                if event.defining_swing_index is not None
+                and 0 <= event.defining_swing_index < len(candles_d1)
+                else candles_d1[event.index].time_utc
+            )
+            end_price = (
+                candles_d1[event.index].low
+                if direction == "SELL"
+                else candles_d1[event.index].high
+            )
+            return ActiveLeg(
+                start_price=event.defining_swing_price,
+                end_price=end_price,
+                start_time=start_time,
+                end_time=event.time_utc,
+            )
+        return None
+
+    def _leg_target_price(
+        self, direction: BiasDirection, leg: ActiveLeg, percent: float
+    ) -> float | None:
+        if percent <= 0 or percent > 1:
+            return None
+        if direction == "SELL":
+            return leg.high - (leg.range * percent)
+        return leg.low + (leg.range * percent)
+
     def _validate_take_profit_plan(
         self, direction: BiasDirection, entry_price: float, active_leg: ActiveLeg
     ) -> tuple[str, float, float] | None:
@@ -794,6 +873,7 @@ class SignalEngine:
         take_profit: str | None,
         tp1_price: float | None,
         tp2_price: float | None,
+        tp3_price: float | None,
         spread_pips: float | None,
         choc_range_pips: float | None,
         stop_distance_pips: float | None,
@@ -814,6 +894,7 @@ class SignalEngine:
             take_profit=take_profit,
             tp1_price=tp1_price,
             tp2_price=tp2_price,
+            tp3_price=tp3_price,
             spread_pips=spread_pips,
             choc_range_pips=choc_range_pips,
             stop_distance_pips=stop_distance_pips,

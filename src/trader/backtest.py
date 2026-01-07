@@ -18,6 +18,7 @@ from .timeframes import (
     TIMEFRAME_M15,
     TIMEFRAME_M5,
     TIMEFRAME_M1,
+    TIMEFRAME_D1,
     TIMEFRAME_SECONDS,
 )
 
@@ -601,6 +602,11 @@ def run_backtest(
     candles_4h = resample_candles(
         base_candles, source_seconds, TIMEFRAME_SECONDS[TIMEFRAME_H4]
     )
+    candles_d1: list[Candle] | None = None
+    if config.TP3_ENABLED and config.TP3_LEG_SOURCE == "D1":
+        candles_d1 = resample_candles(
+            base_candles, source_seconds, TIMEFRAME_SECONDS[TIMEFRAME_D1]
+        )
 
     series = {
         TIMEFRAME_M5: build_series(candles_5m, TIMEFRAME_M5),
@@ -609,6 +615,8 @@ def run_backtest(
     }
     if config.USE_1M_ENTRY and candles_1m is not None:
         series[TIMEFRAME_M1] = build_series(candles_1m, TIMEFRAME_M1)
+    if candles_d1 is not None:
+        series[TIMEFRAME_D1] = build_series(candles_d1, TIMEFRAME_D1)
 
     provider = HistoricalCandleProvider(series)
     engine = SignalEngine(symbol=config.SYMBOL_VARIANTS[0], candle_provider=provider)

@@ -53,12 +53,18 @@ ENABLE_BREAK_EVEN = True  # Move SL to BE after TP1
 
 # Take profit configuration
 # TP leg source: "4H" (default) or "15M"
-TP_LEG_SOURCE = "15M"
+TP_LEG_SOURCE = "30M"
 # TP percentages of the chosen leg
 TP1_LEG_PERCENT = 0.5
 TP2_LEG_PERCENT = 0.9
 # If TP_LEG_SOURCE = "15M" but no 15M leg is available, fallback to 4H leg
 TP_LEG_FALLBACK_TO_4H = True
+# Optional TP3 (runner)
+TP3_ENABLED = False
+# TP3 leg source: "4H" (default) or "D1"
+TP3_LEG_SOURCE = "4H"
+TP3_LEG_PERCENT = 1.0
+TP3_LEG_FALLBACK_TO_4H = True
 
 # FIXED: Don't require liquidity sweep for sells - too restrictive
 REQUIRE_NO_LIQUIDITY_SWEEP = False

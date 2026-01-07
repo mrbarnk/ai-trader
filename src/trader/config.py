@@ -53,7 +53,7 @@ ENABLE_BREAK_EVEN = True  # Move SL to BE after TP1
 
 # Take profit configuration
 # TP leg source: "4H" (default) or "15M"
-TP_LEG_SOURCE = "30M"
+TP_LEG_SOURCE = "4H"
 # TP percentages of the chosen leg
 TP1_LEG_PERCENT = 0.5
 TP2_LEG_PERCENT = 0.9

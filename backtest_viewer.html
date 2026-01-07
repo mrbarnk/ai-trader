@@ -1,0 +1,770 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Backtest Signal Viewer</title>
+    <style>
+      :root {
+        --bg-1: #0f172a;
+        --bg-2: #111827;
+        --bg-3: #0b1220;
+        --panel: rgba(255, 255, 255, 0.06);
+        --panel-strong: rgba(255, 255, 255, 0.12);
+        --text: #e5e7eb;
+        --muted: #94a3b8;
+        --accent: #38bdf8;
+        --accent-2: #f97316;
+        --ok: #22c55e;
+        --warn: #f59e0b;
+        --bad: #ef4444;
+        --border: rgba(148, 163, 184, 0.25);
+        --shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--text);
+        background:
+          radial-gradient(1200px 700px at 10% 10%, rgba(56, 189, 248, 0.15), transparent),
+          radial-gradient(900px 600px at 90% 20%, rgba(249, 115, 22, 0.12), transparent),
+          linear-gradient(160deg, var(--bg-1), var(--bg-2) 60%, var(--bg-3));
+        font-family: "Georgia", "Times New Roman", serif;
+        min-height: 100vh;
+      }
+
+      header {
+        padding: 32px 24px 16px;
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        margin: 0 0 6px;
+        font-size: 28px;
+        letter-spacing: 0.5px;
+      }
+
+      .subtitle {
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      main {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 24px 48px;
+        display: grid;
+        gap: 18px;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 16px 18px;
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(6px);
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .controls label {
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      input[type="file"] {
+        color: var(--text);
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(15, 23, 42, 0.35);
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 12px;
+      }
+
+      .outcomes {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .breakdowns {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .breakdown-card {
+        background: #0f1626;
+        border-radius: 12px;
+        padding: 12px;
+        border: 1px solid rgba(115, 140, 255, 0.18);
+      }
+
+      .breakdown-card h4 {
+        margin: 0 0 8px;
+        font-size: 0.85rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #8ea3c7;
+      }
+
+      .breakdown-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.9rem;
+        margin-bottom: 4px;
+      }
+
+      .outcome-card {
+        background: #121a2a;
+        border-radius: 12px;
+        padding: 12px;
+        border: 1px solid rgba(115, 140, 255, 0.2);
+      }
+
+      .outcome-card h4 {
+        margin: 0 0 6px;
+        font-size: 0.8rem;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: #8ea3c7;
+      }
+
+      .outcome-card p {
+        margin: 0;
+        font-size: 1.2rem;
+        font-weight: 600;
+      }
+
+      .stat {
+        background: var(--panel-strong);
+        border-radius: 12px;
+        padding: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .stat h3 {
+        margin: 0 0 4px;
+        font-size: 12px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+
+      .stat p {
+        margin: 0;
+        font-size: 20px;
+      }
+
+      .bars {
+        display: grid;
+        gap: 10px;
+        margin-top: 10px;
+      }
+
+      .bar-row {
+        display: grid;
+        grid-template-columns: 80px 1fr 60px;
+        gap: 10px;
+        align-items: center;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .bar {
+        height: 10px;
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.15);
+        overflow: hidden;
+      }
+
+      .bar span {
+        display: block;
+        height: 100%;
+        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      th,
+      td {
+        padding: 8px 6px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        text-align: left;
+        white-space: nowrap;
+      }
+
+      th {
+        color: var(--muted);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        font-size: 11px;
+      }
+
+      tbody tr:hover {
+        background: rgba(15, 23, 42, 0.4);
+      }
+
+      .badge {
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        color: #0b1220;
+      }
+
+      .trade {
+        background: var(--ok);
+      }
+
+      .no-trade {
+        background: var(--warn);
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .footer {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 8px;
+      }
+
+      .fade-in {
+        animation: fade 0.6s ease;
+      }
+
+      @keyframes fade {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Backtest Signal Viewer</h1>
+      <div class="subtitle">Load your JSONL file to inspect signals, sessions, and sizing.</div>
+    </header>
+    <main>
+      <section class="panel controls">
+        <input id="fileInput" type="file" accept=".jsonl,.txt" />
+        <span class="pill" id="fileMeta">No file loaded</span>
+        <label class="pill"><input type="checkbox" id="showNoTrade" checked /> Show NO_TRADE</label>
+        <label class="pill"><input type="checkbox" id="showTrade" checked /> Show TRADE</label>
+        <label class="pill"><input type="checkbox" id="showBuy" checked /> BUY</label>
+        <label class="pill"><input type="checkbox" id="showSell" checked /> SELL</label>
+      </section>
+
+      <section class="panel fade-in">
+        <div class="stats" id="stats"></div>
+        <div class="bars" id="bars"></div>
+        <div class="outcomes" id="outcomes"></div>
+        <div class="breakdowns" id="breakdowns"></div>
+      </section>
+
+      <section class="panel fade-in">
+        <table>
+          <thead>
+            <tr>
+              <th>Time (UTC)</th>
+              <th>Session</th>
+              <th>Decision</th>
+              <th>Dir</th>
+              <th>Entry</th>
+              <th>SL</th>
+              <th>TP1</th>
+              <th>TP2</th>
+              <th>Outcome</th>
+              <th>R</th>
+              <th>P/L</th>
+              <th>% Gain</th>
+              <th>Spread</th>
+              <th>Range</th>
+              <th>Lots</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+        <div class="footer" id="tableFooter"></div>
+      </section>
+    </main>
+
+    <script>
+      const fileInput = document.getElementById("fileInput");
+      const fileMeta = document.getElementById("fileMeta");
+      const statsEl = document.getElementById("stats");
+      const barsEl = document.getElementById("bars");
+      const outcomesEl = document.getElementById("outcomes");
+      const breakdownsEl = document.getElementById("breakdowns");
+      const tableBody = document.getElementById("tableBody");
+      const tableFooter = document.getElementById("tableFooter");
+      const showNoTrade = document.getElementById("showNoTrade");
+      const showTrade = document.getElementById("showTrade");
+      const showBuy = document.getElementById("showBuy");
+      const showSell = document.getElementById("showSell");
+
+      let rows = [];
+
+      function formatNumber(value, digits = 2) {
+        if (value === null || value === undefined || Number.isNaN(value)) return "-";
+        return Number(value).toFixed(digits);
+      }
+
+      function formatSigned(value, digits = 2) {
+        if (value === null || value === undefined || Number.isNaN(value)) return "-";
+        const number = Number(value);
+        const sign = number > 0 ? "+" : "";
+        return `${sign}${number.toFixed(digits)}`;
+      }
+
+      function formatPercent(value, digits = 1) {
+        if (value === null || value === undefined || Number.isNaN(value)) return "-";
+        return `${Number(value).toFixed(digits)}%`;
+      }
+
+      function summarize(data) {
+        const total = data.length;
+        const trades = data.filter((d) => d.decision === "TRADE");
+        const noTrades = data.filter((d) => d.decision === "NO_TRADE");
+        const buys = trades.filter((d) => d.direction === "BUY").length;
+        const sells = trades.filter((d) => d.direction === "SELL").length;
+        const london = trades.filter((d) => d.session === "LONDON").length;
+        const ny = trades.filter((d) => d.session === "NY").length;
+        const avgSpread = average(trades.map((d) => d.spread_pips));
+        const avgRange = average(trades.map((d) => d.choc_range_pips));
+        const avgLots = average(trades.map((d) => d.position_size_lots));
+        const outcomes = summarizeOutcomes(trades);
+        const breakdowns = summarizeBreakdowns(trades);
+
+        return {
+          total,
+          trades: trades.length,
+          noTrades: noTrades.length,
+          buys,
+          sells,
+          london,
+          ny,
+          avgSpread,
+          avgRange,
+          avgLots,
+          ...outcomes,
+          ...breakdowns,
+        };
+      }
+
+      function average(list) {
+        const values = list.filter((v) => typeof v === "number" && !Number.isNaN(v));
+        if (!values.length) return null;
+        return values.reduce((a, b) => a + b, 0) / values.length;
+      }
+
+      function summarizeOutcomes(trades) {
+        let totalR = 0;
+        let totalRCount = 0;
+        let totalMoney = 0;
+        let totalMoneyCount = 0;
+        let closedTrades = 0;
+        let wins = 0;
+        const outcomeCounts = {};
+
+        for (const trade of trades) {
+          const metrics = calcPnL(trade);
+          const outcome = trade.outcome || "UNKNOWN";
+          outcomeCounts[outcome] = (outcomeCounts[outcome] || 0) + 1;
+          if (metrics.closed) {
+            closedTrades += 1;
+            if (metrics.r !== null) {
+              totalR += metrics.r;
+              totalRCount += 1;
+            }
+            if (metrics.money !== null) {
+              totalMoney += metrics.money;
+              totalMoneyCount += 1;
+            }
+            if (metrics.r > 0) {
+              wins += 1;
+            }
+          }
+        }
+
+        return {
+          totalR: totalRCount ? totalR : null,
+          avgR: totalRCount ? totalR / totalRCount : null,
+          totalMoney: totalMoneyCount ? totalMoney : null,
+          closedTrades,
+          winRate: closedTrades ? (wins / closedTrades) * 100 : null,
+          outcomeCounts,
+        };
+      }
+
+      function summarizeBreakdowns(trades) {
+        const byDirection = buildBreakdown(trades, (row) => row.direction || "UNKNOWN");
+        const byPlan = buildBreakdown(trades, (row) => row.take_profit || "UNKNOWN");
+        const bySweep = buildBreakdown(trades, (row) =>
+          row.rules_passed?.includes("STEP_5_LIQUIDITY_SWEEP") ? "SWEEP" : "NO_SWEEP"
+        );
+
+        return { byDirection, byPlan, bySweep };
+      }
+
+      function buildBreakdown(trades, keyFn) {
+        const results = {};
+        for (const trade of trades) {
+          const key = keyFn(trade);
+          const metrics = calcPnL(trade);
+          if (!metrics.closed) continue;
+          if (!results[key]) {
+            results[key] = { closed: 0, wins: 0, totalR: 0, totalMoney: 0 };
+          }
+          const bucket = results[key];
+          bucket.closed += 1;
+          if (metrics.r !== null) {
+            bucket.totalR += metrics.r;
+            if (metrics.r > 0) bucket.wins += 1;
+          }
+          if (metrics.money !== null) {
+            bucket.totalMoney += metrics.money;
+          }
+        }
+        return results;
+      }
+
+      function calcPnL(row) {
+        const outcome = row.outcome;
+        const entry = Number(row.entry);
+        const stop = Number(row.stop_loss);
+        const direction = row.direction;
+
+        if (!outcome || !direction || Number.isNaN(entry) || Number.isNaN(stop)) {
+          return { r: null, money: null, closed: false };
+        }
+
+        const riskDistance = Math.abs(entry - stop);
+        if (!riskDistance) {
+          return { r: null, money: null, closed: false };
+        }
+
+        const tp1 = Number(row.tp1_price);
+        const tp2 = Number(row.tp2_price);
+        const tp1Valid = !Number.isNaN(tp1);
+        const tp2Valid = !Number.isNaN(tp2);
+        const r1 = tp1Valid
+          ? direction === "BUY"
+            ? (tp1 - entry) / riskDistance
+            : (entry - tp1) / riskDistance
+          : null;
+        const r2 = tp2Valid
+          ? direction === "BUY"
+            ? (tp2 - entry) / riskDistance
+            : (entry - tp2) / riskDistance
+          : null;
+
+        let rMultiple = null;
+        let closed = false;
+
+        switch (outcome) {
+          case "SL_HIT":
+            rMultiple = -1;
+            closed = true;
+            break;
+          case "TP2_HIT":
+          case "TP1_THEN_TP2":
+            if (r1 === null || r2 === null) {
+              return { r: null, money: null, closed: false };
+            }
+            rMultiple = 0.5 * r1 + 0.5 * r2;
+            closed = true;
+            break;
+          case "TP1_THEN_SL":
+            if (r1 === null) {
+              return { r: null, money: null, closed: false };
+            }
+            rMultiple = 0.5 * r1 - 0.5;
+            closed = true;
+            break;
+          case "TP1_THEN_BE":
+            if (r1 === null) {
+              return { r: null, money: null, closed: false };
+            }
+            rMultiple = 0.5 * r1;
+            closed = true;
+            break;
+          case "TP1_OPEN":
+            if (r1 === null) {
+              return { r: null, money: null, closed: false };
+            }
+            rMultiple = 0.5 * r1;
+            closed = false;
+            break;
+          case "OPEN":
+          case "ENTRY_MISS":
+            rMultiple = 0;
+            closed = false;
+            break;
+          default:
+            rMultiple = null;
+            closed = false;
+        }
+
+        const riskAmount =
+          typeof row.risk_amount === "number" && !Number.isNaN(row.risk_amount)
+            ? row.risk_amount
+            : null;
+        const accountBalance =
+          typeof row.account_balance === "number" && !Number.isNaN(row.account_balance)
+            ? row.account_balance
+            : null;
+        const money = riskAmount !== null && rMultiple !== null ? rMultiple * riskAmount : null;
+        const percent =
+          money !== null && accountBalance ? (money / accountBalance) * 100 : null;
+
+        return { r: rMultiple, money, percent, closed };
+      }
+
+      function renderStats(summary) {
+        const items = [
+          { label: "Total Records", value: summary.total },
+          { label: "TRADE", value: summary.trades },
+          { label: "NO_TRADE", value: summary.noTrades },
+          { label: "Closed Trades", value: summary.closedTrades ?? "-" },
+          { label: "Win Rate", value: formatPercent(summary.winRate) },
+          { label: "BUY", value: summary.buys },
+          { label: "SELL", value: summary.sells },
+          { label: "Total P/L (R)", value: formatSigned(summary.totalR) },
+          { label: "Avg R", value: formatSigned(summary.avgR) },
+          { label: "Total P/L ($)", value: formatSigned(summary.totalMoney) },
+          { label: "Avg Spread", value: formatNumber(summary.avgSpread) },
+          { label: "Avg CHoCH Range", value: formatNumber(summary.avgRange) },
+          { label: "Avg Lots", value: formatNumber(summary.avgLots, 3) },
+        ];
+        statsEl.innerHTML = items
+          .map(
+            (item) => `
+              <div class="stat">
+                <h3>${item.label}</h3>
+                <p>${item.value}</p>
+              </div>
+            `
+          )
+          .join("");
+
+        const maxSession = Math.max(summary.london, summary.ny, 1);
+        barsEl.innerHTML = [
+          { label: "LONDON", value: summary.london },
+          { label: "NY", value: summary.ny },
+        ]
+          .map(
+            (item) => `
+              <div class="bar-row">
+                <span>${item.label}</span>
+                <div class="bar"><span style="width: ${(item.value / maxSession) * 100}%"></span></div>
+                <span>${item.value}</span>
+              </div>
+            `
+          )
+          .join("");
+
+        renderOutcomes(summary.outcomeCounts || {});
+        renderBreakdowns(summary);
+      }
+
+      function renderBreakdowns(summary) {
+        const directionCard = buildBreakdownCard(
+          "Win Rate by Direction",
+          summary.byDirection || {},
+          (key) => key
+        );
+        const planCard = buildBreakdownCard(
+          "Win Rate by TP Plan",
+          summary.byPlan || {},
+          (key) => key
+        );
+        const sweepCard = buildBreakdownCard(
+          "Liquidity Sweep Impact",
+          summary.bySweep || {},
+          (key) => (key === "SWEEP" ? "Sweep" : "No Sweep")
+        );
+        breakdownsEl.innerHTML = [directionCard, planCard, sweepCard]
+          .filter(Boolean)
+          .join("");
+      }
+
+      function buildBreakdownCard(title, data, labelFn) {
+        const keys = Object.keys(data);
+        if (!keys.length) {
+          return "";
+        }
+        const rows = keys
+          .map((key) => {
+            const bucket = data[key];
+            const winRate = bucket.closed ? (bucket.wins / bucket.closed) * 100 : null;
+            return `
+              <div class="breakdown-row">
+                <span>${labelFn(key)}</span>
+                <span>${formatPercent(winRate)} | ${formatSigned(bucket.totalR)}</span>
+              </div>
+            `;
+          })
+          .join("");
+        return `
+          <div class="breakdown-card">
+            <h4>${title}</h4>
+            ${rows}
+          </div>
+        `;
+      }
+
+      function renderOutcomes(outcomeCounts) {
+        const ordered = [
+          "TP2_HIT",
+          "TP1_THEN_TP2",
+          "TP1_THEN_BE",
+          "TP1_THEN_SL",
+          "SL_HIT",
+          "TP1_OPEN",
+          "OPEN",
+          "ENTRY_MISS",
+          "INVALID_RECORD",
+          "NO_DATA",
+          "UNKNOWN",
+        ];
+        const items = ordered
+          .filter((key) => outcomeCounts[key] !== undefined)
+          .map((key) => ({ label: key, value: outcomeCounts[key] }));
+        outcomesEl.innerHTML = items
+          .map(
+            (item) => `
+              <div class="outcome-card">
+                <h4>${item.label.replace(/_/g, " ")}</h4>
+                <p>${item.value}</p>
+              </div>
+            `
+          )
+          .join("");
+      }
+
+      function renderTable(data) {
+        const filtered = data.filter((d) => {
+          if (d.decision === "TRADE" && !showTrade.checked) return false;
+          if (d.decision === "NO_TRADE" && !showNoTrade.checked) return false;
+          if (d.decision === "TRADE" && d.direction === "BUY" && !showBuy.checked) {
+            return false;
+          }
+          if (d.decision === "TRADE" && d.direction === "SELL" && !showSell.checked) {
+            return false;
+          }
+          return true;
+        });
+
+        const display = filtered.slice(0, 300);
+        tableBody.innerHTML = display
+          .map((row) => {
+            const badgeClass = row.decision === "TRADE" ? "trade" : "no-trade";
+            const pnl = calcPnL(row);
+            return `
+              <tr>
+                <td>${row.timestamp_utc || "-"}</td>
+                <td>${row.session || "-"}</td>
+                <td><span class="badge ${badgeClass}">${row.decision}</span></td>
+                <td>${row.direction || "-"}</td>
+                <td>${row.entry ?? "-"}</td>
+                <td>${row.stop_loss ?? "-"}</td>
+                <td>${row.tp1_price ?? "-"}</td>
+                <td>${row.tp2_price ?? "-"}</td>
+                <td>${row.outcome || "-"}</td>
+                <td>${formatSigned(pnl.r)}</td>
+                <td>${formatSigned(pnl.money)}</td>
+                <td>${formatPercent(pnl.percent)}</td>
+                <td>${formatNumber(row.spread_pips)}</td>
+                <td>${formatNumber(row.choc_range_pips)}</td>
+                <td>${formatNumber(row.position_size_lots, 3)}</td>
+              </tr>
+            `;
+          })
+          .join("");
+
+        tableFooter.textContent = `Showing ${display.length} of ${filtered.length} records`;
+      }
+
+      function parseJsonl(text) {
+        const lines = text.split(/\r?\n/);
+        const parsed = [];
+        let errors = 0;
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            parsed.push(JSON.parse(line));
+          } catch (err) {
+            errors += 1;
+          }
+        }
+        return { parsed, errors };
+      }
+
+      function updateView() {
+        const summary = summarize(rows);
+        renderStats(summary);
+        renderTable(rows);
+      }
+
+      fileInput.addEventListener("change", (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        fileMeta.textContent = `${file.name} (${Math.round(file.size / 1024)} KB)`;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const { parsed, errors } = parseJsonl(reader.result);
+          rows = parsed;
+          if (errors > 0) {
+            fileMeta.textContent += ` | ${errors} bad lines ignored`;
+          }
+          updateView();
+        };
+        reader.readAsText(file);
+      });
+
+      showNoTrade.addEventListener("change", updateView);
+      showTrade.addEventListener("change", updateView);
+      showBuy.addEventListener("change", updateView);
+      showSell.addEventListener("change", updateView);
+    </script>
+  </body>
+</html>

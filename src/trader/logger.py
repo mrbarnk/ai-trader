@@ -12,7 +12,10 @@ class SignalLogger:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    def log(self, signal: SignalOutput) -> None:
-        record = asdict(signal)
+    def log(self, signal: SignalOutput | dict) -> None:
+        if isinstance(signal, dict):
+            record = signal
+        else:
+            record = asdict(signal)
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record) + "\n")

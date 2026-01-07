@@ -7,14 +7,7 @@ from typing import Literal, Protocol
 
 from . import config
 from .models import Candle
-from .structure import (
-    BreakEvent,
-    BreakDirection,
-    find_breaks,
-    find_swings,
-    has_liquidity_sweep,
-    latest_event,
-)
+from .structure import BreakEvent, BreakDirection, find_breaks, find_swings, has_liquidity_sweep
 from .time_utils import session_from_utc
 from .timeframes import TIMEFRAME_H4, TIMEFRAME_M15, TIMEFRAME_M5, TIMEFRAME_M1
 
@@ -54,6 +47,7 @@ class TradingState:
     bias_established_session: str | None = None
     last_4h_close_time: datetime | None = None
     active_leg: ActiveLeg | None = None
+    last_4h_event_type: str | None = None
 
 
 @dataclass
@@ -181,8 +175,13 @@ class SignalEngine:
         self._update_4h_bias(candles_4h)
         direction = self.state.bias
         if direction is None:
+            if self.state.last_4h_event_type == "CHoCH":
+                return fail("STEP_2_4H_LAST_EVENT_CHOCH")
             return fail("STEP_2_4H_BIAS_NO_TRADE")
         rules_passed.append("STEP_2_4H_BIAS_CLEAR")
+        bias_time = self.state.bias_established_time
+        if bias_time is None:
+            return fail("STEP_2_4H_BIAS_TIME_MISSING")
 
         if session == "NY" and self.state.bias_established_session != "LONDON":
             return fail("STEP_1_NY_REQUIRES_LONDON_BIAS")
@@ -209,6 +208,8 @@ class SignalEngine:
             if direction == "SELL":
                 return fail("STEP_4_15M_PREMIUM_CROSS_MISSING")
             return fail("STEP_4_15M_DISCOUNT_CROSS_MISSING")
+        if cross_time < bias_time:
+            return fail("STEP_4_15M_CROSS_BEFORE_4H_BOS")
         if direction == "SELL":
             rules_passed.append("STEP_4_15M_PREMIUM_CROSS_OK")
         else:
@@ -219,6 +220,8 @@ class SignalEngine:
         )
         if structure_event is None:
             return fail("STEP_4_15M_CHOCH_AFTER_CROSS_MISSING")
+        if structure_event.time_utc < bias_time:
+            return fail("STEP_4_15M_CHOCH_BEFORE_4H_BOS")
 
         structure_pos = active_leg.position(structure_event.close_price)
         if structure_pos is None:
@@ -256,6 +259,10 @@ class SignalEngine:
         )
         if swept:
             rules_passed.append("STEP_5_LIQUIDITY_SWEEP")
+        if direction == "SELL" and config.REQUIRE_LIQUIDITY_SWEEP_SELL and not swept:
+            return fail("STEP_5_LIQUIDITY_SWEEP_REQUIRED")
+        if config.REQUIRE_NO_LIQUIDITY_SWEEP and swept:
+            return fail("STEP_5_LIQUIDITY_SWEEP_EXCLUDED")
 
         # STEP 6 — 5M TRIGGER CHECK (CHoCH)
         swings_5m = find_swings(candles_5m, config.SWING_LEFT, config.SWING_RIGHT)
@@ -267,29 +274,27 @@ class SignalEngine:
             return fail("STEP_6_5M_CHOCH_MISSING")
         rules_passed.append("STEP_6_5M_CHOCH_FOUND")
 
-        if config.ENABLE_CHOCH_RANGE_FILTER:
-            if not self._choc_range_ok(candles_5m, choc_event):
-                return fail("STEP_6_5M_CHOCH_RANGE_TOO_SMALL")
-            rules_passed.append("STEP_6_5M_CHOCH_RANGE_OK")
-
         choc_pos = active_leg.position(choc_event.close_price)
         if choc_pos is None:
             return fail("STEP_6_5M_PULLBACK_UNDEFINED")
         if choc_pos < 0 or choc_pos > 1:
             return fail("STEP_6_5M_OUTSIDE_LEG")
 
+        require_5m_premium = config.REQUIRE_5M_CHOCH_PREMIUM or (
+            direction == "SELL" and config.REQUIRE_5M_CHOCH_PREMIUM_SELL
+        )
         if direction == "SELL":
             if choc_pos < 0.382:
                 return fail("STEP_6_5M_OUTSIDE_PULLBACK")
-            if config.REQUIRE_5M_CHOCH_PREMIUM and choc_pos < 0.5:
+            if require_5m_premium and choc_pos < 0.5:
                 return fail("STEP_6_5M_PREMIUM_REQUIRED")
         else:
             if choc_pos > 0.618:
                 return fail("STEP_6_5M_OUTSIDE_PULLBACK")
-            if config.REQUIRE_5M_CHOCH_PREMIUM and choc_pos > 0.5:
+            if require_5m_premium and choc_pos > 0.5:
                 return fail("STEP_6_5M_PREMIUM_REQUIRED")
         rules_passed.append("STEP_6_5M_IN_PULLBACK")
-        if config.REQUIRE_5M_CHOCH_PREMIUM:
+        if require_5m_premium:
             rules_passed.append("STEP_6_5M_PREMIUM_OK")
 
         if not self._choc_after_pullback(events_5m, choc_event):
@@ -297,7 +302,10 @@ class SignalEngine:
         rules_passed.append("STEP_6_5M_AFTER_PULLBACK")
 
         entry_event = choc_event
-        if config.USE_1M_ENTRY:
+        use_1m_entry = config.USE_1M_ENTRY and (
+            direction != "SELL" or config.ENABLE_1M_ENTRY_SELL
+        )
+        if use_1m_entry:
             swings_1m = find_swings(
                 candles_1m or [], config.SWING_LEFT, config.SWING_RIGHT
             )
@@ -337,23 +345,34 @@ class SignalEngine:
                 return fail("STEP_6_1M_AFTER_PULLBACK")
             rules_passed.append("STEP_6_1M_AFTER_PULLBACK")
 
+        if config.ENABLE_CHOCH_RANGE_FILTER:
+            if not self._choc_range_ok(candles_5m, choc_event):
+                return fail("STEP_6_5M_CHOCH_RANGE_TOO_SMALL")
+            rules_passed.append("STEP_6_5M_CHOCH_RANGE_OK")
+
+        entry_candles = candles_1m if use_1m_entry else candles_5m
+        entry_candle = entry_candles[entry_event.index]
+        entry_high = entry_candle.high
+        entry_low = entry_candle.low
+        if entry_event.break_level is None:
+            return fail("STEP_6_ENTRY_BREAK_LEVEL_MISSING")
+        entry_price = self._round_price(entry_event.break_level)
+
         # STEP 7 — STOP LOSS VALIDITY CHECK
+        choch_high = entry_high
+        choch_low = entry_low
+        sl_buffer = config.SL_EXTRA_PIPS * config.PIP_SIZE
         if direction == "SELL":
-            stop_loss = self._round_price(
-                self._entry_high(candles_5m, candles_1m, entry_event) + config.PIP_SIZE
-            )
+            stop_loss = self._round_price(choch_high + sl_buffer)
         else:
-            stop_loss = self._round_price(
-                self._entry_low(candles_5m, candles_1m, entry_event) - config.PIP_SIZE
-            )
+            stop_loss = self._round_price(choch_low - sl_buffer)
         rules_passed.append("STEP_7_SL_VALID")
 
-        entry_candles = candles_1m if config.USE_1M_ENTRY else candles_5m
         choc_range_pips = self._choc_range_pips(entry_candles, entry_event)
         if choc_range_pips is None:
             choc_range_pips = 0.0
 
-        stop_distance_pips = abs(entry_event.close_price - stop_loss) / config.PIP_SIZE
+        stop_distance_pips = abs(entry_price - stop_loss) / config.PIP_SIZE
         if stop_distance_pips <= 0:
             return fail("STEP_7_STOP_DISTANCE_INVALID")
 
@@ -368,7 +387,6 @@ class SignalEngine:
             rules_passed.append("STEP_7_RISK_SIZING_OK")
 
         # STEP 8 — TAKE PROFIT PLAN CHECK
-        entry_price = self._round_price(entry_event.close_price)
         take_profit_plan = self._validate_take_profit_plan(
             direction, entry_price, active_leg
         )
@@ -407,18 +425,29 @@ class SignalEngine:
         if self.state.last_4h_close_time == last_closed:
             return
 
-        swings = find_swings(candles_4h, config.SWING_LEFT, config.SWING_RIGHT)
+        swings = find_swings(
+            candles_4h, config.SWING_LEFT_4H, config.SWING_RIGHT_4H
+        )
         events = find_breaks(candles_4h, swings)
         if not events:
             self.state.bias = None
             self.state.active_leg = None
+            self.state.last_4h_event_type = None
             self.state.last_4h_close_time = last_closed
             return
 
         last_event = events[-1]
+        self.state.last_4h_event_type = last_event.event_type
         if last_event.defining_swing_price is None:
             self.state.bias = None
             self.state.active_leg = None
+            self.state.last_4h_close_time = last_closed
+            return
+        if last_event.event_type == "CHoCH":
+            self.state.bias = None
+            self.state.active_leg = None
+            self.state.bias_established_time = None
+            self.state.bias_established_session = None
             self.state.last_4h_close_time = last_closed
             return
 
@@ -524,38 +553,20 @@ class SignalEngine:
                     return candle.time_utc
         return None
 
-    def _entry_high(
-        self,
-        candles_5m: list[Candle],
-        candles_1m: list[Candle] | None,
-        entry_event: BreakEvent,
-    ) -> float:
-        if candles_1m:
-            return candles_1m[entry_event.index].high
-        return candles_5m[entry_event.index].high
-
-    def _entry_low(
-        self,
-        candles_5m: list[Candle],
-        candles_1m: list[Candle] | None,
-        entry_event: BreakEvent,
-    ) -> float:
-        if candles_1m:
-            return candles_1m[entry_event.index].low
-        return candles_5m[entry_event.index].low
-
     def _validate_take_profit_plan(
         self, direction: BiasDirection, entry_price: float, active_leg: ActiveLeg
     ) -> tuple[str, float, float] | None:
-        leg_mid = (active_leg.high + active_leg.low) / 2
+        leg_range = active_leg.high - active_leg.low
+        if leg_range <= 0:
+            return None
         if direction == "SELL":
-            tp1 = leg_mid
-            tp2 = active_leg.low
+            tp1 = active_leg.high - (leg_range * 0.5)
+            tp2 = active_leg.high - (leg_range * 0.9)
             if not (entry_price > tp1 > tp2):
                 return None
         else:
-            tp1 = leg_mid
-            tp2 = active_leg.high
+            tp1 = active_leg.low + (leg_range * 0.5)
+            tp2 = active_leg.low + (leg_range * 0.9)
             if not (entry_price < tp1 < tp2):
                 return None
         return "PLAN_A", self._round_price(tp1), self._round_price(tp2)
@@ -605,6 +616,8 @@ class SignalEngine:
         return round(price, 5)
 
     def _safe_spread_pips(self) -> float | None:
+        if config.ASSUME_ZERO_SPREAD:
+            return 0.0
         try:
             from .mt5_client import get_spread_pips
         except Exception:

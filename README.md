@@ -13,7 +13,7 @@ Required columns (UTC):
 Notes:
 - Timestamps must be UTC and ISO 8601 (example: 2023-01-03T07:00:00Z)
 - Source candles are resampled into 5m/15m/4h for the engine
-- If `USE_1M_ENTRY = True` in `src/trader/config.py`, the CSV must be 1-minute data
+- If `USE_1M_ENTRY = True` in `src/trader/config.py`, the CSV must be 1-minute data.
 
 ## Backtest examples
 
@@ -35,3 +35,8 @@ PYTHONPATH=src python -m trader.backtest data/gu_1m.csv \
   --start 2024-01-01T00:00:00Z \
   --end 2024-03-31T23:59:59Z
 ```
+
+## Local viewers
+
+- `backtest_viewer.html`: load `logs/backtest_signals_outcomes.jsonl` to inspect outcomes, P/L, and win rates.
+- `backtest_chart.html`: load your CSV + outcomes JSONL to see a 5M chart with trade markers.

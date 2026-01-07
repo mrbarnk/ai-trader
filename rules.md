@@ -56,6 +56,8 @@ Rules:
   * At least one confirmed BOS in one direction
   * Last valid swing high/low is respected
   * No opposite BOS after the last impulse
+  * The most recent 4H break is **BOS**, not CHoCH
+  * 4H swings use **major swing settings** (internal BOS/iBOS ignored)
 * Bias is invalidated if:
 
   * An opposite-direction BOS occurs
@@ -102,6 +104,7 @@ Structure definitions (15M and 5M):
 * Did price **first close into premium** at **50% or 70%** (config)? → YES / NO
 * Did 15M **CHoCH** occur **after** that premium close? → YES / NO
 * Did 15M **CHoCH** occur in **top 50% of the 4H leg**? → YES / NO
+* 15M cross + CHoCH must occur **after the latest 4H BOS** (if a new 4H BOS prints before trigger → reset)
 * Structure must be within **0% – 100%** of the active 4H leg
 * Valid zone = **50% – 100%**
 * Strong zone = **70% – 100%**
@@ -135,6 +138,7 @@ Liquidity sweep definition (GU-specific):
 * Candle closes back inside the prior range
 
 These do **not** override Step 4, but increase confidence.
+If `REQUIRE_NO_LIQUIDITY_SWEEP = True` and a sweep occurs → **NO TRADE**
 
 ---
 
@@ -145,8 +149,8 @@ These do **not** override Step 4, but increase confidence.
 * Did it occur **inside the 15M pullback**?
 * It must be within **0% – 100%** of the active 4H leg
 * 5M CHoCH premium check is **optional** (config)
+* You can enforce premium **only for SELL** using `REQUIRE_5M_CHOCH_PREMIUM_SELL`
 * Did it occur after a pullback (not in consolidation)?
-* CHoCH candle range filter (optional): **>= min pips** (config)
 
 If **any NO** → **NO TRADE**
 
@@ -159,6 +163,7 @@ If enabled:
 * Did it occur **inside the 15M pullback**?
 * It must be within **0% – 100%** of the active 4H leg
 * 1M CHoCH premium check is **optional** (config)
+* You can disable 1M entry **only for SELL** using `ENABLE_1M_ENTRY_SELL = False`
 * Did it occur after a pullback (not in consolidation)?
 * CHoCH candle range filter (optional): **>= min pips** (config)
 
@@ -166,12 +171,22 @@ If **any NO** → **NO TRADE**
 
 ---
 
+## STEP 6B — ENTRY PRICE (LOCKED)
+
+* Entry price = **the wick that got broken** (the swing level)
+* Use the **1M CHoCH break** if `USE_1M_ENTRY` is enabled, otherwise use **5M**
+* `entry_price = break_level` from the CHoCH event
+
+---
+
 ## STEP 7 — STOP LOSS VALIDITY CHECK
 
-* Can SL be placed **beyond the entry CHoCH** (1M or 5M)?
+* Can SL be placed **at the 5M CHoCH extreme**, with optional buffer?
 
-  * SELL → SL above CHoCH high
-  * BUY → SL below CHoCH low
+  * SELL → SL at CHoCH high + buffer
+  * BUY → SL at CHoCH low - buffer
+
+* `buffer = SL_EXTRA_PIPS` (config, set to 0 to disable)
 
 If SL placement is unclear or invalid → **NO TRADE**
 No widening stops. Ever.
@@ -194,8 +209,9 @@ AI must select **one**:
 
 ### TP PLAN A (ONLY)
 
-* TP1 = **50% of the active 4H leg**
-* TP2 = **4H LL** (SELL) or **4H HH** (BUY)
+* TP1 = **50% of the 4H BOS wick**
+* TP2 = **90% of the 4H BOS wick** (in bias direction)
+* After TP1 is hit → move SL to **break-even (entry)** if `ENABLE_BREAK_EVEN = True`
 
 If the plan is invalid relative to entry → **NO TRADE**
 

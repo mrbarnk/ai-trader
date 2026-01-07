@@ -56,6 +56,8 @@ Rules:
   * At least one confirmed BOS in one direction
   * Last valid swing high/low is respected
   * No opposite BOS after the last impulse
+  * The most recent 4H break is **BOS**, not CHoCH
+  * 4H swings use **major swing settings** (internal BOS/iBOS ignored)
 * Bias is invalidated if:
 
   * An opposite-direction BOS occurs
@@ -109,6 +111,7 @@ Structure definitions (15M and 5M):
 
 * Price must **first close into premium** at **50% or 70%** (config)
 * 15M **CHoCH** must occur **after** that premium close
+* 15M cross + CHoCH must occur **after the latest 4H BOS** (new 4H BOS resets the setup)
 * 15M **CHoCH** **must happen in the top 50%**
 * Valid zone = **50% – 100%** of the leg
 * Strong zone = **70% – 100%**
@@ -121,6 +124,7 @@ Structure definitions (15M and 5M):
 
 * Price must **first close into discount** at **50% or 30%** (config)
 * 15M **CHoCH** must occur **after** that discount close
+* 15M cross + CHoCH must occur **after the latest 4H BOS** (new 4H BOS resets the setup)
 * 15M **CHoCH** **must happen in the bottom 50%**
 * Valid zone = **0% – 50%** of the leg
 * Strong zone = **0% – 30%**
@@ -148,22 +152,21 @@ Rules:
 * It must happen **inside the 15M pullback**
 * It must be within **0% – 100%** of the active 4H leg
 * 5M CHoCH premium check is **optional** (config)
+* You can enforce premium **only for SELL** using `REQUIRE_5M_CHOCH_PREMIUM_SELL`
 * Mid-pullback or late CHoCH → **no trade**
 * CHoCH must occur after a pullback, not in consolidation
-* CHoCH candle range filter is **optional** (config)
 
 No CHoCH → no trade.
 
-### Optional 1M entry
+---
 
-If enabled:
+## Entry Price (Locked)
 
-* 1M CHoCH must occur **after** the 5M CHoCH
-* It must be **in the same direction as 4H**
-* It must happen **inside the 15M pullback**
-* 1M CHoCH premium check is **optional** (config)
-* SL is based on the chosen entry timeframe (1M or 5M)
-* CHoCH candle range filter is **optional** (config)
+Entry is the **broken swing wick** (break level):
+
+* Use the **1M CHoCH break** if `USE_1M_ENTRY` is enabled, otherwise use **5M**
+* `entry_price = break_level` from the CHoCH event
+* You can disable 1M entry **only for SELL** using `ENABLE_1M_ENTRY_SELL = False`
 
 ---
 
@@ -176,6 +179,8 @@ Liquidity sweep definition (GU-specific):
 * Price wicks beyond a prior equal/obvious high/low
 * Wick exceeds that level by **>= 3 pips**
 * Candle closes back inside the prior range
+
+If `REQUIRE_NO_LIQUIDITY_SWEEP = True` and a sweep occurs → **NO TRADE**
 
 Signal strength ranking:
 
@@ -191,10 +196,12 @@ The system prefers quality, not quantity.
 
 Stop loss must:
 
-* Be placed **beyond the entry CHoCH** (1M or 5M)
+* Be placed **at the 5M CHoCH extreme**, with optional buffer
 
-  * SELL → above CHoCH high
-  * BUY → below CHoCH low
+  * SELL → at CHoCH high + buffer
+  * BUY → at CHoCH low - buffer
+
+* `buffer = SL_EXTRA_PIPS` (config, set to 0 to disable)
 
 If SL cannot be placed cleanly:
 
@@ -220,10 +227,11 @@ If sizing is invalid → **NO TRADE**
 
 Each trade uses **one plan only**.
 
-### TP Plan A — Partial + 4H swing extreme
+### TP Plan A — BOS wick targets
 
-* TP1: **50% of the active 4H leg**
-* TP2: **4H LL** (SELL) or **4H HH** (BUY)
+* TP1: **50% of the 4H BOS wick**
+* TP2: **90% of the 4H BOS wick** (bias direction)
+* After TP1 is hit → move SL to **break-even (entry)** if `ENABLE_BREAK_EVEN = True`
 
 If the plan is not valid relative to entry:
 

@@ -1,0 +1,835 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Backtest Trade Chart</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+        background: #0b1220;
+        color: #e7edf6;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 24px;
+      }
+
+      header {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-bottom: 16px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 1.8rem;
+        letter-spacing: 0.02em;
+      }
+
+      .subtitle {
+        color: #9fb1cc;
+        font-size: 0.95rem;
+      }
+
+      .panel {
+        background: #0f1a2e;
+        border-radius: 16px;
+        padding: 16px;
+        border: 1px solid rgba(120, 144, 200, 0.2);
+        margin-bottom: 16px;
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .controls label {
+        font-size: 0.85rem;
+        color: #9fb1cc;
+      }
+
+      .controls input,
+      .controls select,
+      .controls button {
+        background: #121f36;
+        border: 1px solid rgba(130, 155, 210, 0.2);
+        color: #e7edf6;
+        padding: 8px 10px;
+        border-radius: 10px;
+        font-size: 0.9rem;
+      }
+
+      .controls button {
+        cursor: pointer;
+        transition: transform 0.12s ease;
+      }
+
+      .controls button:active {
+        transform: scale(0.98);
+      }
+
+      .controls .pill {
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(95, 120, 180, 0.2);
+        color: #c6d4ea;
+        font-size: 0.8rem;
+      }
+
+      .chart-wrap {
+        position: relative;
+        height: 560px;
+      }
+
+      canvas {
+        width: 100%;
+        height: 100%;
+        background: #0b1324;
+        border-radius: 12px;
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        font-size: 0.8rem;
+        margin-top: 12px;
+        color: #9fb1cc;
+      }
+
+      .legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+
+      .dot.buy {
+        background: #40d589;
+      }
+
+      .dot.sell {
+        background: #ff6b6b;
+      }
+
+      .dot.win {
+        background: #3ddc97;
+      }
+
+      .dot.loss {
+        background: #ff6b6b;
+      }
+
+      .dot.be {
+        background: #ffd166;
+      }
+
+      .dot.open {
+        background: #7a8fb8;
+      }
+
+      .dot.london {
+        background: rgba(255, 215, 128, 0.5);
+      }
+
+      .dot.ny {
+        background: rgba(112, 176, 255, 0.5);
+      }
+
+      .dot.sl {
+        background: rgba(255, 107, 107, 0.7);
+      }
+
+      .dot.tp {
+        background: rgba(64, 213, 137, 0.7);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Backtest Trade Chart</h1>
+      <div class="subtitle">Load CSV candles + outcomes to visualize trades on a 5M chart.</div>
+    </header>
+
+    <section class="panel controls">
+      <label>
+        Candles CSV
+        <input id="csvInput" type="file" accept=".csv" />
+      </label>
+      <label>
+        Outcomes JSONL
+        <input id="jsonlInput" type="file" accept=".jsonl,.txt" />
+      </label>
+      <label>
+        Source Minutes
+        <select id="sourceMinutes">
+          <option value="1" selected>1</option>
+          <option value="5">5</option>
+        </select>
+      </label>
+      <label>
+        Chart Minutes
+        <select id="targetMinutes">
+          <option value="1">1</option>
+          <option value="5" selected>5</option>
+          <option value="15">15</option>
+          <option value="30">30</option>
+          <option value="60">60</option>
+          <option value="240">240</option>
+        </select>
+      </label>
+      <label>
+        Window Size
+        <input id="windowSize" type="number" min="50" max="2000" value="300" />
+      </label>
+      <button id="prevBtn">Prev</button>
+      <button id="nextBtn">Next</button>
+      <label>
+        Go to UTC (YYYY-MM-DD HH:MM)
+        <input id="gotoTime" type="text" placeholder="2024-04-24 07:30" />
+      </label>
+      <button id="gotoBtn">Go</button>
+      <label>
+        <input id="toggleTrades" type="checkbox" checked /> Show trades
+      </label>
+      <label>
+        <input id="toggleSessions" type="checkbox" checked /> Session shading
+      </label>
+      <span class="pill" id="meta">No data loaded</span>
+    </section>
+
+    <section class="panel">
+      <div class="chart-wrap">
+        <canvas id="chart"></canvas>
+      </div>
+      <div class="legend">
+        <span><span class="dot buy"></span> BUY entry</span>
+        <span><span class="dot sell"></span> SELL entry</span>
+        <span><span class="dot win"></span> TP hit</span>
+        <span><span class="dot loss"></span> SL hit</span>
+        <span><span class="dot be"></span> BE after TP1</span>
+        <span><span class="dot open"></span> Open</span>
+        <span><span class="dot sl"></span> SL line</span>
+        <span><span class="dot tp"></span> TP line</span>
+        <span><span class="dot london"></span> London session</span>
+        <span><span class="dot ny"></span> NY session</span>
+      </div>
+    </section>
+
+    <script>
+      const csvInput = document.getElementById("csvInput");
+      const jsonlInput = document.getElementById("jsonlInput");
+      const sourceMinutesEl = document.getElementById("sourceMinutes");
+      const targetMinutesEl = document.getElementById("targetMinutes");
+      const windowSizeEl = document.getElementById("windowSize");
+      const prevBtn = document.getElementById("prevBtn");
+      const nextBtn = document.getElementById("nextBtn");
+      const gotoTimeEl = document.getElementById("gotoTime");
+      const gotoBtn = document.getElementById("gotoBtn");
+      const toggleTrades = document.getElementById("toggleTrades");
+      const toggleSessions = document.getElementById("toggleSessions");
+      const metaEl = document.getElementById("meta");
+      const canvas = document.getElementById("chart");
+      const ctx = canvas.getContext("2d");
+
+      let candles = [];
+      let trades = [];
+      let startIndex = 0;
+      let anchorTime = null;
+      let isDragging = false;
+      let dragStartX = 0;
+      let dragStartIndex = 0;
+      let zoomFactor = 1;
+      let verticalZoom = 1;
+      let verticalAnchor = null;
+      let lastDraw = null;
+
+      function parseTimestamp(value) {
+        let text = value.trim();
+        if (text.includes(".")) {
+          text = text.replace(/\./g, "-");
+        }
+        if (text.includes("T")) {
+          if (!text.endsWith("Z") && !text.includes("+")) {
+            text += "Z";
+          }
+          return new Date(text);
+        }
+        if (text.includes(" ")) {
+          return new Date(text.replace(" ", "T") + "Z");
+        }
+        return new Date(text + "Z");
+      }
+
+      function parseCsv(text) {
+        const rows = text.trim().split(/\r?\n/).map((line) => line.split(","));
+        if (!rows.length) return [];
+        const header = rows[0].map((value) => value.trim().toLowerCase());
+        const hasHeader =
+          header.includes("open") &&
+          header.includes("high") &&
+          header.includes("low") &&
+          header.includes("close");
+
+        const parsed = [];
+        if (hasHeader) {
+          const map = {};
+          header.forEach((key, idx) => {
+            map[key] = idx;
+          });
+          const timeKey =
+            map.timestamp_utc ??
+            map.timestamp ??
+            map.time ??
+            map.datetime ??
+            map.date;
+          for (let i = 1; i < rows.length; i += 1) {
+            const row = rows[i];
+            if (!row.length) continue;
+            const time = parseTimestamp(row[timeKey]);
+            parsed.push({
+              time,
+              open: Number(row[map.open]),
+              high: Number(row[map.high]),
+              low: Number(row[map.low]),
+              close: Number(row[map.close]),
+            });
+          }
+          return parsed;
+        }
+
+        for (const row of rows) {
+          if (row.length < 6) continue;
+          let time;
+          let offset = 2;
+          if (row[0].includes(":")) {
+            time = parseTimestamp(row[0]);
+            offset = 1;
+          } else {
+            const date = row[0].trim();
+            const clock = row[1].trim();
+            time = parseTimestamp(`${date} ${clock}`);
+            offset = 2;
+          }
+          parsed.push({
+            time,
+            open: Number(row[offset]),
+            high: Number(row[offset + 1]),
+            low: Number(row[offset + 2]),
+            close: Number(row[offset + 3]),
+          });
+        }
+        return parsed;
+      }
+
+      function resampleCandles(source, sourceMinutes, targetMinutes) {
+        if (sourceMinutes === targetMinutes) return source;
+        const sourceSeconds = sourceMinutes * 60;
+        const targetSeconds = targetMinutes * 60;
+        const buckets = new Map();
+
+        for (const candle of source) {
+          const epoch = Math.floor(candle.time.getTime() / 1000);
+          const bucket = epoch - (epoch % targetSeconds);
+          if (!buckets.has(bucket)) buckets.set(bucket, []);
+          buckets.get(bucket).push(candle);
+        }
+
+        const expected = targetSeconds / sourceSeconds;
+        const resampled = [];
+        for (const bucket of Array.from(buckets.keys()).sort((a, b) => a - b)) {
+          const items = buckets.get(bucket);
+          if (!items || items.length !== expected) continue;
+          items.sort((a, b) => a.time - b.time);
+          resampled.push({
+            time: new Date(bucket * 1000),
+            open: items[0].open,
+            high: Math.max(...items.map((c) => c.high)),
+            low: Math.min(...items.map((c) => c.low)),
+            close: items[items.length - 1].close,
+          });
+        }
+        return resampled;
+      }
+
+      function parseJsonl(text) {
+        const lines = text.split(/\r?\n/);
+        const parsed = [];
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            parsed.push(JSON.parse(line));
+          } catch (err) {
+            continue;
+          }
+        }
+        return parsed;
+      }
+
+      function getSession(candleTime) {
+        const hour = candleTime.getUTCHours();
+        const minute = candleTime.getUTCMinutes();
+        const minutes = hour * 60 + minute;
+        if (minutes >= 420 && minutes < 660) return "LONDON";
+        if (minutes >= 720 && minutes < 840) return "NY";
+        return null;
+      }
+
+      function resizeCanvas() {
+        const rect = canvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+
+      function formatTime(time) {
+        return time.toISOString().replace("T", " ").slice(0, 16);
+      }
+
+      function findIndexByTime(targetTime) {
+        let lo = 0;
+        let hi = candles.length - 1;
+        let best = 0;
+        while (lo <= hi) {
+          const mid = Math.floor((lo + hi) / 2);
+          if (candles[mid].time <= targetTime) {
+            best = mid;
+            lo = mid + 1;
+          } else {
+            hi = mid - 1;
+          }
+        }
+        return best;
+      }
+
+      function setAnchorFromView() {
+        if (!candles.length) return;
+        const windowSize = Number(windowSizeEl.value) || 300;
+        const centerIndex = Math.min(
+          candles.length - 1,
+          Math.max(0, startIndex + Math.floor(windowSize / 2))
+        );
+        anchorTime = candles[centerIndex]?.time || null;
+      }
+
+      function setStartIndexFromAnchor() {
+        if (!candles.length || !anchorTime) return;
+        const windowSize = Number(windowSizeEl.value) || 300;
+        const anchorIndex = findIndexByTime(anchorTime);
+        startIndex = Math.max(0, anchorIndex - Math.floor(windowSize / 2));
+        startIndex = Math.min(Math.max(0, candles.length - windowSize), startIndex);
+      }
+
+      function tradesInView(start, end) {
+        const result = [];
+        for (const trade of trades) {
+          const confirmTime = trade.timestamp_utc
+            ? parseTimestamp(trade.timestamp_utc)
+            : null;
+          const fillTime = trade.entry_filled_time
+            ? parseTimestamp(trade.entry_filled_time)
+            : null;
+          const time = fillTime || confirmTime;
+          if (!time) continue;
+          const confirmIndex = confirmTime ? findIndexByTime(confirmTime) : null;
+          const fillIndex = fillTime ? findIndexByTime(fillTime) : null;
+          const inView =
+            (confirmIndex !== null && confirmIndex >= start && confirmIndex < end) ||
+            (fillIndex !== null && fillIndex >= start && fillIndex < end);
+          if (inView) {
+            result.push({
+              ...trade,
+              confirmTime,
+              fillTime,
+              confirmIndex,
+              fillIndex,
+            });
+          }
+        }
+        return result;
+      }
+
+      function draw() {
+        if (!candles.length) return;
+        resizeCanvas();
+        const width = canvas.clientWidth;
+        const height = canvas.clientHeight;
+        const margin = { left: 60, right: 20, top: 20, bottom: 30 };
+        const chartWidth = width - margin.left - margin.right;
+        const chartHeight = height - margin.top - margin.bottom;
+
+        const baseWindow = Number(windowSizeEl.value) || 300;
+        const windowSize = Math.max(50, Math.round(baseWindow * zoomFactor));
+        const endIndex = Math.min(startIndex + windowSize, candles.length);
+        const view = candles.slice(startIndex, endIndex);
+        if (!view.length) return;
+
+        const tradeLevels = [];
+        if (toggleTrades.checked) {
+          for (const trade of tradesInView(startIndex, endIndex)) {
+            if (typeof trade.entry === "number") tradeLevels.push(trade.entry);
+            if (typeof trade.stop_loss === "number") tradeLevels.push(trade.stop_loss);
+            if (typeof trade.tp1_price === "number") tradeLevels.push(trade.tp1_price);
+            if (typeof trade.tp2_price === "number") tradeLevels.push(trade.tp2_price);
+          }
+        }
+
+        const highs = view.map((c) => c.high);
+        const lows = view.map((c) => c.low);
+        const allHighs = highs.concat(tradeLevels);
+        const allLows = lows.concat(tradeLevels);
+        let maxPrice = Math.max(...allHighs);
+        let minPrice = Math.min(...allLows);
+        const padding = (maxPrice - minPrice) * 0.08 || 0.001;
+        maxPrice += padding;
+        minPrice -= padding;
+        const baseMax = maxPrice;
+        const baseMin = minPrice;
+        if (verticalAnchor === null) {
+          verticalAnchor = (baseMax + baseMin) / 2;
+        }
+        const anchor = Math.min(baseMax, Math.max(baseMin, verticalAnchor));
+        const baseRange = baseMax - baseMin || 0.001;
+        const zoomedRange = baseRange / Math.max(0.2, Math.min(verticalZoom, 6));
+        maxPrice = anchor + zoomedRange / 2;
+        minPrice = anchor - zoomedRange / 2;
+
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#0b1324";
+        ctx.fillRect(0, 0, width, height);
+
+        const candleWidth = chartWidth / view.length;
+
+        if (toggleSessions.checked) {
+          view.forEach((candle, idx) => {
+            const session = getSession(candle.time);
+            if (!session) return;
+            const x = margin.left + idx * candleWidth;
+            ctx.fillStyle =
+              session === "LONDON" ? "rgba(255, 215, 128, 0.08)" : "rgba(112, 176, 255, 0.08)";
+            ctx.fillRect(x, margin.top, candleWidth, chartHeight);
+          });
+        }
+
+        ctx.strokeStyle = "rgba(140, 160, 200, 0.25)";
+        ctx.lineWidth = 1;
+        for (let i = 0; i <= 5; i += 1) {
+          const y = margin.top + (chartHeight * i) / 5;
+          ctx.beginPath();
+          ctx.moveTo(margin.left, y);
+          ctx.lineTo(width - margin.right, y);
+          ctx.stroke();
+        }
+
+        view.forEach((candle, idx) => {
+          const xCenter = margin.left + idx * candleWidth + candleWidth / 2;
+          const openY = margin.top + ((maxPrice - candle.open) / (maxPrice - minPrice)) * chartHeight;
+          const closeY = margin.top + ((maxPrice - candle.close) / (maxPrice - minPrice)) * chartHeight;
+          const highY = margin.top + ((maxPrice - candle.high) / (maxPrice - minPrice)) * chartHeight;
+          const lowY = margin.top + ((maxPrice - candle.low) / (maxPrice - minPrice)) * chartHeight;
+          const bullish = candle.close >= candle.open;
+          ctx.strokeStyle = bullish ? "#40d589" : "#ff6b6b";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(xCenter, highY);
+          ctx.lineTo(xCenter, lowY);
+          ctx.stroke();
+
+          const bodyHeight = Math.max(Math.abs(closeY - openY), 1);
+          ctx.fillStyle = bullish ? "#40d589" : "#ff6b6b";
+          ctx.fillRect(
+            xCenter - candleWidth * 0.3,
+            Math.min(openY, closeY),
+            candleWidth * 0.6,
+            bodyHeight
+          );
+        });
+
+        if (toggleTrades.checked) {
+          const viewTrades = tradesInView(startIndex, endIndex);
+          const lineLength = Math.max(candleWidth * 24, 80);
+          for (const trade of viewTrades) {
+            const confirmIndex =
+              trade.confirmIndex !== null ? trade.confirmIndex : trade.fillIndex;
+            const fillIndex = trade.fillIndex ?? confirmIndex;
+            if (confirmIndex === null) continue;
+            const xConfirm =
+              margin.left + (confirmIndex - startIndex) * candleWidth + candleWidth / 2;
+            const xFill =
+              fillIndex !== null
+                ? margin.left + (fillIndex - startIndex) * candleWidth + candleWidth / 2
+                : xConfirm + lineLength;
+            const entry = trade.entry;
+            if (typeof entry === "number") {
+              const y = margin.top + ((maxPrice - entry) / (maxPrice - minPrice)) * chartHeight;
+              const outcome = trade.outcome || "OPEN";
+              let markerColor = "#7a8fb8";
+              if (["TP2_HIT", "TP1_THEN_TP2"].includes(outcome)) {
+                markerColor = "#3ddc97";
+              } else if (["SL_HIT", "TP1_THEN_SL"].includes(outcome)) {
+                markerColor = "#ff6b6b";
+              } else if (outcome === "TP1_THEN_BE") {
+                markerColor = "#ffd166";
+              }
+              ctx.fillStyle = markerColor;
+              ctx.beginPath();
+              const markerX = fillIndex !== null ? xFill : xConfirm;
+              if (trade.direction === "SELL") {
+                ctx.moveTo(markerX, y - 7);
+                ctx.lineTo(markerX - 7, y + 7);
+                ctx.lineTo(markerX + 7, y + 7);
+              } else {
+                ctx.moveTo(markerX, y + 7);
+                ctx.lineTo(markerX - 7, y - 7);
+                ctx.lineTo(markerX + 7, y - 7);
+              }
+              ctx.closePath();
+              ctx.fill();
+
+              ctx.strokeStyle = "rgba(192, 210, 240, 0.4)";
+              ctx.lineWidth = 1;
+              ctx.beginPath();
+              ctx.moveTo(markerX, margin.top);
+              ctx.lineTo(markerX, margin.top + chartHeight);
+              ctx.stroke();
+
+              ctx.fillStyle = markerColor;
+              ctx.font = "11px Space Grotesk, sans-serif";
+              const label = outcome.replace(/_/g, " ");
+              ctx.fillText(label, markerX + 8, y - 8);
+            }
+
+            const levels = [
+              { price: trade.stop_loss, color: "rgba(255, 107, 107, 0.9)", label: "SL" },
+              { price: trade.tp1_price, color: "rgba(64, 213, 137, 0.9)", label: "TP1" },
+              { price: trade.tp2_price, color: "rgba(64, 213, 137, 0.5)", label: "TP2" },
+              { price: trade.entry, color: "rgba(180, 205, 250, 0.8)", label: "Entry" },
+            ];
+            levels.forEach((level) => {
+              if (typeof level.price !== "number") return;
+              const y = margin.top + ((maxPrice - level.price) / (maxPrice - minPrice)) * chartHeight;
+              const x1 = Math.max(margin.left, xConfirm + candleWidth * 0.2);
+              const lineEnd =
+                fillIndex !== null && xFill > xConfirm ? xFill : xConfirm + lineLength;
+              const x2 = Math.min(width - margin.right, lineEnd);
+              ctx.strokeStyle = level.color;
+              ctx.lineWidth = 1.3;
+              ctx.setLineDash([]);
+              ctx.beginPath();
+              ctx.moveTo(x1, y);
+              ctx.lineTo(x2, y);
+              ctx.stroke();
+              ctx.fillStyle = level.color;
+              const labelX = Math.min(width - margin.right - 28, x2 + 4);
+              ctx.fillText(level.label, labelX, y + 4);
+            });
+          }
+        }
+
+        ctx.fillStyle = "#9fb1cc";
+        ctx.font = "12px Space Grotesk, sans-serif";
+        const priceStep = (maxPrice - minPrice) / 5;
+        for (let i = 0; i <= 5; i += 1) {
+          const price = maxPrice - priceStep * i;
+          const y = margin.top + (chartHeight * i) / 5;
+          ctx.fillText(price.toFixed(5), 8, y + 4);
+        }
+
+        const labelCount = Math.min(6, view.length);
+        const step = Math.floor(view.length / labelCount);
+        for (let i = 0; i < view.length; i += step) {
+          const candle = view[i];
+          const x = margin.left + i * candleWidth;
+          ctx.fillText(formatTime(candle.time).slice(5), x, height - 8);
+        }
+
+        metaEl.textContent = `${view.length} candles | ${formatTime(view[0].time)} → ${formatTime(
+          view[view.length - 1].time
+        )}`;
+
+        lastDraw = {
+          minPrice,
+          maxPrice,
+          baseMin,
+          baseMax,
+          chartHeight,
+          chartWidth,
+          margin,
+          windowSize,
+          startIndex,
+        };
+      }
+
+      function handleCsv(file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const parsed = parseCsv(reader.result);
+          parsed.sort((a, b) => a.time - b.time);
+          const sourceMinutes = Number(sourceMinutesEl.value);
+          const targetMinutes = Number(targetMinutesEl.value);
+          candles = resampleCandles(parsed, sourceMinutes, targetMinutes);
+          const windowSize = Number(windowSizeEl.value) || 300;
+          if (!anchorTime) {
+            startIndex = Math.max(0, candles.length - windowSize);
+          } else {
+            setStartIndexFromAnchor();
+          }
+          draw();
+        };
+        reader.readAsText(file);
+      }
+
+      function handleJsonl(file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          trades = parseJsonl(reader.result).filter((row) => row.decision === "TRADE");
+          draw();
+        };
+        reader.readAsText(file);
+      }
+
+      csvInput.addEventListener("change", (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        handleCsv(file);
+      });
+
+      jsonlInput.addEventListener("change", (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        handleJsonl(file);
+      });
+
+      window.addEventListener("resize", draw);
+
+      prevBtn.addEventListener("click", () => {
+        const windowSize = Math.max(50, Math.round((Number(windowSizeEl.value) || 300) * zoomFactor));
+        startIndex = Math.max(0, startIndex - windowSize);
+        setAnchorFromView();
+        draw();
+      });
+
+      nextBtn.addEventListener("click", () => {
+        const windowSize = Math.max(50, Math.round((Number(windowSizeEl.value) || 300) * zoomFactor));
+        startIndex = Math.min(Math.max(0, candles.length - windowSize), startIndex + windowSize);
+        setAnchorFromView();
+        draw();
+      });
+
+      gotoBtn.addEventListener("click", () => {
+        if (!candles.length) return;
+        const value = gotoTimeEl.value.trim();
+        if (!value) return;
+        const time = parseTimestamp(value);
+        anchorTime = time;
+        setStartIndexFromAnchor();
+        draw();
+      });
+
+      toggleTrades.addEventListener("change", draw);
+      toggleSessions.addEventListener("change", draw);
+      windowSizeEl.addEventListener("change", () => {
+        setAnchorFromView();
+        setStartIndexFromAnchor();
+        draw();
+      });
+      sourceMinutesEl.addEventListener("change", () => {
+        if (!candles.length || !csvInput.files[0]) return;
+        setAnchorFromView();
+        handleCsv(csvInput.files[0]);
+      });
+
+      targetMinutesEl.addEventListener("change", () => {
+        if (!candles.length || !csvInput.files[0]) return;
+        setAnchorFromView();
+        handleCsv(csvInput.files[0]);
+      });
+
+      canvas.addEventListener("mousedown", (event) => {
+        if (!candles.length) return;
+        isDragging = true;
+        dragStartX = event.clientX;
+        dragStartIndex = startIndex;
+      });
+
+      window.addEventListener("mouseup", () => {
+        if (!isDragging) return;
+        isDragging = false;
+        setAnchorFromView();
+      });
+
+      window.addEventListener("mousemove", (event) => {
+        if (!isDragging || !candles.length) return;
+        const baseWindow = Number(windowSizeEl.value) || 300;
+        const windowSize = Math.max(50, Math.round(baseWindow * zoomFactor));
+        const chartWidth = canvas.clientWidth - 80;
+        if (chartWidth <= 0) return;
+        const candlesPerPx = windowSize / chartWidth;
+        const delta = Math.round((event.clientX - dragStartX) * candlesPerPx);
+        startIndex = Math.max(0, Math.min(candles.length - windowSize, dragStartIndex - delta));
+        draw();
+      });
+
+      canvas.addEventListener(
+        "wheel",
+        (event) => {
+          if (!candles.length || !lastDraw) return;
+          event.preventDefault();
+          const delta = Math.sign(event.deltaY);
+          const zoomStep = delta > 0 ? 1.12 : 1 / 1.12;
+          const rect = canvas.getBoundingClientRect();
+          const x = event.clientX - rect.left;
+          const y = event.clientY - rect.top;
+          const margin = lastDraw.margin;
+          const chartWidth = lastDraw.chartWidth;
+          const chartHeight = lastDraw.chartHeight;
+          const withinX = Math.max(margin.left, Math.min(rect.width - margin.right, x));
+          const withinY = Math.max(margin.top, Math.min(rect.height - margin.bottom, y));
+
+          if (event.shiftKey || event.altKey) {
+            const currentRange = lastDraw.maxPrice - lastDraw.minPrice;
+            const priceAtCursor =
+              lastDraw.maxPrice -
+              ((withinY - margin.top) / chartHeight) * currentRange;
+            verticalAnchor = priceAtCursor;
+            verticalZoom = Math.min(6, Math.max(0.25, verticalZoom * zoomStep));
+            draw();
+            return;
+          }
+
+          const ratio = (withinX - margin.left) / chartWidth;
+          const oldWindow = lastDraw.windowSize;
+          zoomFactor = Math.min(4, Math.max(0.25, zoomFactor * zoomStep));
+          const newWindow = Math.max(50, Math.round((Number(windowSizeEl.value) || 300) * zoomFactor));
+          const anchorIndex = Math.min(
+            candles.length - 1,
+            Math.max(0, lastDraw.startIndex + Math.floor(oldWindow * ratio))
+          );
+          anchorTime = candles[anchorIndex]?.time || anchorTime;
+          startIndex = Math.max(0, anchorIndex - Math.floor(newWindow * ratio));
+          startIndex = Math.min(Math.max(0, candles.length - newWindow), startIndex);
+          draw();
+        },
+        { passive: false }
+      );
+    </script>
+  </body>
+</html>

@@ -3,13 +3,27 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import secrets
 import sys
 import tempfile
+from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from flask import Flask, Response, Request, request
+from werkzeug.security import check_password_hash, generate_password_hash
+from sqlalchemy import (
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    func,
+)
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from werkzeug.exceptions import HTTPException
 
 BASE_STYLE = """
@@ -113,6 +127,7 @@ from trader import config  # noqa: E402
 
 APP_USERNAME = os.getenv("APP_USERNAME")
 APP_PASSWORD = os.getenv("APP_PASSWORD")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///app.db")
 
 MAX_CSV_BYTES = 10 * 1024 * 1024
 MAX_CANDLES = 100_000
@@ -122,6 +137,104 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_CSV_BYTES
 
 VIEWER_HTML = (BASE_DIR / "backtest_viewer.html").read_text(encoding="utf-8")
+
+DEFAULT_USER_CONFIG: dict[str, Any] = {
+    "tp_leg_source": "4H",
+    "tp1_leg_percent": 0.5,
+    "tp2_leg_percent": 0.9,
+    "tp3_enabled": False,
+    "tp3_leg_source": "4H",
+    "tp3_leg_percent": 1.0,
+    "sl_extra_pips": 3.0,
+    "enable_break_even": True,
+    "use_real_balance": False,
+    "starting_balance": 10000.0,
+    "risk_per_trade_pct": 1.0,
+    "use_1m_entry": False,
+    "metaapi_account_id": "",
+    "metaapi_token": "",
+}
+
+CONFIG_FLOAT_KEYS = {
+    "tp1_leg_percent",
+    "tp2_leg_percent",
+    "tp3_leg_percent",
+    "sl_extra_pips",
+    "starting_balance",
+    "risk_per_trade_pct",
+}
+CONFIG_BOOL_KEYS = {"tp3_enabled", "enable_break_even", "use_real_balance", "use_1m_entry"}
+CONFIG_STRING_KEYS = {"tp_leg_source", "tp3_leg_source", "metaapi_account_id", "metaapi_token"}
+ALLOWED_CONFIG_KEYS = CONFIG_FLOAT_KEYS | CONFIG_BOOL_KEYS | CONFIG_STRING_KEYS
+
+
+def _normalize_database_url() -> tuple[str, dict[str, Any]]:
+    url = DATABASE_URL
+    if url.startswith("postgres://"):
+        url = "postgresql+psycopg://" + url[len("postgres://") :]
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://") :]
+    connect_args: dict[str, Any] = {}
+    if url.startswith("sqlite:///"):
+        connect_args = {"check_same_thread": False}
+    return url, connect_args
+
+
+_db_url, _db_connect_args = _normalize_database_url()
+engine = create_engine(_db_url, connect_args=_db_connect_args, pool_pre_ping=True, future=True)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+Base = declarative_base()
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), unique=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    tokens = relationship("ApiToken", cascade="all, delete-orphan", back_populates="user")
+    configs = relationship("UserConfig", cascade="all, delete-orphan", back_populates="user")
+
+
+class ApiToken(Base):
+    __tablename__ = "api_tokens"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    token = Column(String(255), unique=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    user = relationship("User", back_populates="tokens")
+
+
+class UserConfig(Base):
+    __tablename__ = "user_configs"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
+    config_json = Column(Text, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    user = relationship("User", back_populates="configs")
+
+
+def init_db() -> None:
+    Base.metadata.create_all(bind=engine)
+
+
+init_db()
+
+
+@contextmanager
+def db_session():
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def _check_auth(req: Request) -> bool:
@@ -145,6 +258,8 @@ def _require_auth() -> Response | None:
 
 @app.before_request
 def enforce_basic_auth() -> Response | None:
+    if request.path.startswith("/api/") or request.path == "/health":
+        return None
     return _require_auth()
 
 
@@ -174,8 +289,79 @@ def _render_error(message: str, status_code: int = 400) -> Response:
 def handle_exception(_err: Exception) -> Response:
     if isinstance(_err, HTTPException):
         message = _err.description or "Request failed."
+        if request.path.startswith("/api/"):
+            return _json_error(message, _err.code or 400)
         return _render_error(message, _err.code or 400)
+    if request.path.startswith("/api/"):
+        return _json_error("Something went wrong. Please try again.", 500)
     return _render_error("Something went wrong. Please try again.", 500)
+
+
+def _json_response(payload: dict[str, Any], status_code: int = 200) -> Response:
+    return Response(json.dumps(payload), status=status_code, mimetype="application/json")
+
+
+def _json_error(message: str, status_code: int = 400) -> Response:
+    return _json_response({"error": message}, status_code)
+
+
+def _bearer_token() -> str | None:
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    return auth.split(" ", 1)[1].strip() or None
+
+
+def _require_token(session) -> User | None:
+    token = _bearer_token()
+    if not token:
+        return None
+    token_row = session.query(ApiToken).filter_by(token=token).first()
+    if not token_row:
+        return None
+    return token_row.user
+
+
+def _sanitize_config(data: dict[str, Any]) -> dict[str, Any]:
+    sanitized: dict[str, Any] = {}
+    for key, value in data.items():
+        if key not in ALLOWED_CONFIG_KEYS:
+            continue
+        if key in CONFIG_FLOAT_KEYS:
+            try:
+                sanitized[key] = float(value)
+            except (TypeError, ValueError):
+                continue
+        elif key in CONFIG_BOOL_KEYS:
+            sanitized[key] = bool(value)
+        else:
+            sanitized[key] = str(value).strip()
+    return sanitized
+
+
+def _load_user_config(session, user: User) -> dict[str, Any]:
+    existing = session.query(UserConfig).filter_by(user_id=user.id).first()
+    if not existing:
+        return DEFAULT_USER_CONFIG.copy()
+    try:
+        stored = json.loads(existing.config_json)
+    except json.JSONDecodeError:
+        stored = {}
+    merged = DEFAULT_USER_CONFIG.copy()
+    merged.update({k: v for k, v in stored.items() if k in ALLOWED_CONFIG_KEYS})
+    return merged
+
+
+def _save_user_config(session, user: User, config_data: dict[str, Any]) -> dict[str, Any]:
+    merged = _load_user_config(session, user)
+    merged.update(config_data)
+    existing = session.query(UserConfig).filter_by(user_id=user.id).first()
+    payload = json.dumps(merged)
+    if existing:
+        existing.config_json = payload
+    else:
+        session.add(UserConfig(user_id=user.id, config_json=payload))
+    return merged
 
 
 def _load_rows(jsonl_path: Path) -> list[dict[str, Any]]:
@@ -243,6 +429,11 @@ def index() -> Response:
     return Response(html, mimetype="text/html")
 
 
+@app.route("/health", methods=["GET"])
+def health() -> Response:
+    return Response("ok", mimetype="text/plain")
+
+
 @app.route("/run", methods=["POST"])
 def run() -> Response:
     upload = request.files.get("csv")
@@ -270,6 +461,129 @@ def run() -> Response:
         rows = _load_rows(outcome_path)
 
     return _render_viewer(rows)
+
+
+@app.route("/api/signup", methods=["POST"])
+def api_signup() -> Response:
+    data = request.get_json(silent=True) or {}
+    email = str(data.get("email", "")).strip().lower()
+    password = str(data.get("password", "")).strip()
+    if not email or not password:
+        return _json_error("Email and password are required.", 400)
+    with db_session() as session:
+        if session.query(User).filter_by(email=email).first():
+            return _json_error("Email already registered.", 409)
+        user = User(email=email, password_hash=generate_password_hash(password))
+        session.add(user)
+        session.flush()
+        token_value = secrets.token_urlsafe(32)
+        token_row = ApiToken(user_id=user.id, token=token_value)
+        session.add(token_row)
+        _save_user_config(session, user, {})
+        return _json_response(
+            {"token": token_value, "user": {"id": user.id, "email": user.email}}, 201
+        )
+
+
+@app.route("/api/login", methods=["POST"])
+def api_login() -> Response:
+    data = request.get_json(silent=True) or {}
+    email = str(data.get("email", "")).strip().lower()
+    password = str(data.get("password", "")).strip()
+    if not email or not password:
+        return _json_error("Email and password are required.", 400)
+    with db_session() as session:
+        user = session.query(User).filter_by(email=email).first()
+        if not user or not check_password_hash(user.password_hash, password):
+            return _json_error("Invalid credentials.", 401)
+        token_value = secrets.token_urlsafe(32)
+        session.add(ApiToken(user_id=user.id, token=token_value))
+        return _json_response(
+            {"token": token_value, "user": {"id": user.id, "email": user.email}}
+        )
+
+
+@app.route("/api/logout", methods=["POST"])
+def api_logout() -> Response:
+    with db_session() as session:
+        token = _bearer_token()
+        if not token:
+            return _json_error("Missing bearer token.", 401)
+        token_row = session.query(ApiToken).filter_by(token=token).first()
+        if not token_row:
+            return _json_error("Invalid token.", 401)
+        session.delete(token_row)
+        return _json_response({"ok": True})
+
+
+@app.route("/api/me", methods=["GET"])
+def api_me() -> Response:
+    with db_session() as session:
+        user = _require_token(session)
+        if not user:
+            return _json_error("Unauthorized.", 401)
+        return _json_response({"id": user.id, "email": user.email})
+
+
+@app.route("/api/config", methods=["GET", "PUT"])
+def api_config() -> Response:
+    with db_session() as session:
+        user = _require_token(session)
+        if not user:
+            return _json_error("Unauthorized.", 401)
+        if request.method == "GET":
+            return _json_response({"config": _load_user_config(session, user)})
+        payload = request.get_json(silent=True) or {}
+        sanitized = _sanitize_config(payload)
+        if not sanitized:
+            return _json_error("No valid config fields provided.", 400)
+        updated = _save_user_config(session, user, sanitized)
+        return _json_response({"config": updated})
+
+
+@app.route("/api/docs", methods=["GET"])
+def api_docs() -> Response:
+    html = f"""
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <title>API Docs</title>
+        <style>{BASE_STYLE}</style>
+      </head>
+      <body>
+        <div class="wrap">
+          <div class="panel">
+            <h1>API Docs</h1>
+            <p>All endpoints return JSON. Use the Bearer token from /api/login or /api/signup.</p>
+            <div class="meta">
+              <div>POST /api/signup</div>
+              <div>POST /api/login</div>
+              <div>POST /api/logout</div>
+              <div>GET /api/me</div>
+              <div>GET /api/config</div>
+              <div>PUT /api/config</div>
+            </div>
+          </div>
+          <div class="panel" style="margin-top: 16px;">
+            <h2>Signup</h2>
+            <pre><code>{"{ \"email\": \"you@example.com\", \"password\": \"secret\" }"}</code></pre>
+            <h2>Login</h2>
+            <pre><code>{"{ \"email\": \"you@example.com\", \"password\": \"secret\" }"}</code></pre>
+            <h2>Config Update</h2>
+            <pre><code>{"{ \"tp1_leg_percent\": 0.5, \"tp2_leg_percent\": 0.8, \"sl_extra_pips\": 3 }"}</code></pre>
+            <h2>Config Keys</h2>
+            <p>Allowed keys:</p>
+            <pre><code>tp_leg_source, tp1_leg_percent, tp2_leg_percent,
+tp3_enabled, tp3_leg_source, tp3_leg_percent,
+sl_extra_pips, enable_break_even, use_real_balance,
+starting_balance, risk_per_trade_pct, use_1m_entry,
+metaapi_account_id, metaapi_token</code></pre>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+    return Response(html, mimetype="text/html")
 
 
 if __name__ == "__main__":

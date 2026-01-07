@@ -370,6 +370,8 @@
         const total = data.length;
         const trades = data.filter((d) => d.decision === "TRADE");
         const noTrades = data.filter((d) => d.decision === "NO_TRADE");
+        const startBalance = findFirstNumber(trades, ["balance_before", "account_balance"]);
+        const endBalance = findLastNumber(trades, ["balance_after", "account_balance"]);
         const buys = trades.filter((d) => d.direction === "BUY").length;
         const sells = trades.filter((d) => d.direction === "SELL").length;
         const london = trades.filter((d) => d.session === "LONDON").length;
@@ -386,6 +388,8 @@
           noTrades: noTrades.length,
           buys,
           sells,
+          startBalance,
+          endBalance,
           london,
           ny,
           avgSpread,
@@ -400,6 +404,31 @@
         const values = list.filter((v) => typeof v === "number" && !Number.isNaN(v));
         if (!values.length) return null;
         return values.reduce((a, b) => a + b, 0) / values.length;
+      }
+
+      function findFirstNumber(rows, keys) {
+        for (const row of rows) {
+          for (const key of keys) {
+            const value = row?.[key];
+            if (typeof value === "number" && !Number.isNaN(value)) {
+              return value;
+            }
+          }
+        }
+        return null;
+      }
+
+      function findLastNumber(rows, keys) {
+        for (let i = rows.length - 1; i >= 0; i -= 1) {
+          const row = rows[i];
+          for (const key of keys) {
+            const value = row?.[key];
+            if (typeof value === "number" && !Number.isNaN(value)) {
+              return value;
+            }
+          }
+        }
+        return null;
       }
 
       function summarizeOutcomes(trades) {
@@ -651,6 +680,8 @@
       function renderStats(summary) {
         const items = [
           { label: "Total Records", value: summary.total },
+          { label: "Start Balance", value: formatNumber(summary.startBalance, 2) },
+          { label: "End Balance", value: formatNumber(summary.endBalance, 2) },
           { label: "TRADE", value: summary.trades },
           { label: "NO_TRADE", value: summary.noTrades },
           { label: "Closed Trades", value: summary.closedTrades ?? "-" },

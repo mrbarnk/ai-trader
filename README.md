@@ -54,3 +54,8 @@ APP_USERNAME=demo APP_PASSWORD=demo PYTHONPATH=src python app.py
 Render:
 - Use `render.yaml`
 - Set `APP_USERNAME` and `APP_PASSWORD` in Render environment variables
+- Attach a Render Postgres database and set `DATABASE_URL`
+
+## API
+
+API docs are available at `/api/docs` once the service is running.

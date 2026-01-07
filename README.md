@@ -63,3 +63,7 @@ API docs are available at `/api/docs` once the service is running.
 Model selection:
 - Set `MODEL_MODE = "aggressive"` or `"passive"` in `src/trader/config.py`
 - Or update `model_mode` via `PUT /api/config`
+
+Backtest API:
+- `POST /api/backtest` with `Authorization: Bearer <token>` and multipart CSV field `csv`
+- Uses the user config (including `model_mode`) when running the backtest

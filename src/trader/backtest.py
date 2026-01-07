@@ -558,6 +558,7 @@ def run_backtest(
     output_path: Path,
     start: datetime | None,
     end: datetime | None,
+    model_mode: str | None = None,
 ) -> None:
     """
     ✅ FIXED: Main backtest loop with proper risk management
@@ -622,7 +623,7 @@ def run_backtest(
     engine = get_engine(
         symbol=config.SYMBOL_VARIANTS[0],
         candle_provider=provider,
-        mode=config.MODEL_MODE,
+        mode=model_mode or config.MODEL_MODE,
     )
     logger = SignalLogger(str(output_path))
     outcome_logger = SignalLogger(str(outcome_path))
@@ -822,6 +823,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--start", type=str, default=None, help="Start time (ISO 8601 UTC).")
     parser.add_argument("--end", type=str, default=None, help="End time (ISO 8601 UTC).")
+    parser.add_argument(
+        "--model-mode",
+        type=str,
+        default=None,
+        help="Model mode: aggressive or passive (default: config.MODEL_MODE).",
+    )
     return parser.parse_args()
 
 
@@ -1117,7 +1124,14 @@ def main() -> None:
     args = parse_args()
     start = parse_timestamp(args.start) if args.start else None
     end = parse_timestamp(args.end) if args.end else None
-    run_backtest(args.csv, args.source_minutes, args.output, start, end)
+    run_backtest(
+        args.csv,
+        args.source_minutes,
+        args.output,
+        start,
+        end,
+        model_mode=args.model_mode,
+    )
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ import hmac
 import json
 import os
 import secrets
+import threading
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -173,6 +174,7 @@ CONFIG_STRING_KEYS = {
     "metaapi_token",
 }
 ALLOWED_CONFIG_KEYS = CONFIG_FLOAT_KEYS | CONFIG_BOOL_KEYS | CONFIG_STRING_KEYS
+CONFIG_LOCK = threading.Lock()
 
 
 def _normalize_database_url() -> tuple[str, dict[str, Any]]:
@@ -371,6 +373,39 @@ def _save_user_config(session, user: User, config_data: dict[str, Any]) -> dict[
     return merged
 
 
+def _build_config_overrides(user_config: dict[str, Any]) -> dict[str, Any]:
+    overrides: dict[str, Any] = {
+        "MODEL_MODE": user_config.get("model_mode", config.MODEL_MODE),
+        "TP_LEG_SOURCE": user_config.get("tp_leg_source", config.TP_LEG_SOURCE),
+        "TP1_LEG_PERCENT": user_config.get("tp1_leg_percent", config.TP1_LEG_PERCENT),
+        "TP2_LEG_PERCENT": user_config.get("tp2_leg_percent", config.TP2_LEG_PERCENT),
+        "TP3_ENABLED": user_config.get("tp3_enabled", config.TP3_ENABLED),
+        "TP3_LEG_SOURCE": user_config.get("tp3_leg_source", config.TP3_LEG_SOURCE),
+        "TP3_LEG_PERCENT": user_config.get("tp3_leg_percent", config.TP3_LEG_PERCENT),
+        "SL_EXTRA_PIPS": user_config.get("sl_extra_pips", config.SL_EXTRA_PIPS),
+        "ENABLE_BREAK_EVEN": user_config.get("enable_break_even", config.ENABLE_BREAK_EVEN),
+        "RISK_PER_TRADE_PCT": user_config.get("risk_per_trade_pct", config.RISK_PER_TRADE_PCT),
+        "USE_1M_ENTRY": user_config.get("use_1m_entry", config.USE_1M_ENTRY),
+        "ACCOUNT_BALANCE_OVERRIDE": user_config.get(
+            "starting_balance", config.ACCOUNT_BALANCE_OVERRIDE
+        ),
+    }
+    return overrides
+
+
+@contextmanager
+def _apply_config_overrides(overrides: dict[str, Any]):
+    with CONFIG_LOCK:
+        original = {key: getattr(config, key) for key in overrides.keys()}
+        for key, value in overrides.items():
+            setattr(config, key, value)
+        try:
+            yield
+        finally:
+            for key, value in original.items():
+                setattr(config, key, value)
+
+
 def _load_rows(jsonl_path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with jsonl_path.open("r", encoding="utf-8") as handle:
@@ -468,6 +503,56 @@ def run() -> Response:
         rows = _load_rows(outcome_path)
 
     return _render_viewer(rows)
+
+
+@app.route("/api/backtest", methods=["POST"])
+def api_backtest() -> Response:
+    with db_session() as session:
+        user = _require_token(session)
+        if not user:
+            return _json_error("Unauthorized.", 401)
+
+        upload = request.files.get("csv")
+        if not upload or upload.filename == "":
+            return _json_error("No CSV file uploaded.", 400)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "upload.csv"
+            upload.save(csv_path)
+
+            error = _validate_candles(csv_path)
+            if error:
+                return _json_error(error, 400)
+
+            output_path = Path(tmpdir) / "signals.jsonl"
+            outcome_path = output_path.with_name(output_path.stem + "_outcomes.jsonl")
+            user_config = _load_user_config(session, user)
+            overrides = _build_config_overrides(user_config)
+
+            original_log_setting = config.LOG_DAILY_LIMITS
+            config.LOG_DAILY_LIMITS = False
+            try:
+                with _apply_config_overrides(overrides):
+                    run_backtest(
+                        csv_path,
+                        source_minutes=1,
+                        output_path=output_path,
+                        start=None,
+                        end=None,
+                        model_mode=overrides.get("MODEL_MODE"),
+                    )
+            finally:
+                config.LOG_DAILY_LIMITS = original_log_setting
+
+            rows = _load_rows(outcome_path)
+
+        return _json_response(
+            {
+                "user": {"id": user.id, "email": user.email},
+                "model_mode": overrides.get("MODEL_MODE"),
+                "rows": rows,
+            }
+        )
 
 
 @app.route("/api/signup", methods=["POST"])
@@ -569,6 +654,7 @@ def api_docs() -> Response:
               <div>GET /api/me</div>
               <div>GET /api/config</div>
               <div>PUT /api/config</div>
+              <div>POST /api/backtest</div>
             </div>
           </div>
           <div class="panel" style="margin-top: 16px;">
@@ -578,6 +664,8 @@ def api_docs() -> Response:
             <pre><code>{"{ \"email\": \"you@example.com\", \"password\": \"secret\" }"}</code></pre>
             <h2>Config Update</h2>
             <pre><code>{"{ \"tp1_leg_percent\": 0.5, \"tp2_leg_percent\": 0.8, \"sl_extra_pips\": 3 }"}</code></pre>
+            <h2>Backtest</h2>
+            <p>Multipart form with a CSV file (field name: <code>csv</code>).</p>
             <h2>Config Keys</h2>
             <p>Allowed keys:</p>
             <pre><code>tp_leg_source, tp1_leg_percent, tp2_leg_percent,

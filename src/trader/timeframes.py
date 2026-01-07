@@ -1,0 +1,21 @@
+from __future__ import annotations
+
+try:
+    import MetaTrader5 as mt5
+
+    TIMEFRAME_M1 = mt5.TIMEFRAME_M1
+    TIMEFRAME_M5 = mt5.TIMEFRAME_M5
+    TIMEFRAME_M15 = mt5.TIMEFRAME_M15
+    TIMEFRAME_H4 = mt5.TIMEFRAME_H4
+except Exception:
+    TIMEFRAME_M1 = 1
+    TIMEFRAME_M5 = 5
+    TIMEFRAME_M15 = 15
+    TIMEFRAME_H4 = 240
+
+TIMEFRAME_SECONDS = {
+    TIMEFRAME_M1: 60,
+    TIMEFRAME_M5: 5 * 60,
+    TIMEFRAME_M15: 15 * 60,
+    TIMEFRAME_H4: 4 * 60 * 60,
+}

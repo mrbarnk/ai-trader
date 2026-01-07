@@ -10,6 +10,98 @@ from pathlib import Path
 from typing import Any
 
 from flask import Flask, Response, Request, request
+from werkzeug.exceptions import HTTPException
+
+BASE_STYLE = """
+    :root {
+      --bg-1: #0f172a;
+      --bg-2: #111827;
+      --bg-3: #0b1220;
+      --panel: rgba(255, 255, 255, 0.06);
+      --panel-strong: rgba(255, 255, 255, 0.12);
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-2: #f97316;
+      --border: rgba(148, 163, 184, 0.25);
+      --shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Georgia", "Times New Roman", serif;
+      color: var(--text);
+      min-height: 100vh;
+      background:
+        radial-gradient(1200px 700px at 10% 10%, rgba(56, 189, 248, 0.15), transparent),
+        radial-gradient(900px 600px at 90% 20%, rgba(249, 115, 22, 0.12), transparent),
+        linear-gradient(160deg, var(--bg-1), var(--bg-2) 60%, var(--bg-3));
+    }
+
+    .wrap {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 36px 20px 48px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(6px);
+    }
+
+    h1, h2 {
+      margin: 0 0 8px;
+      letter-spacing: 0.4px;
+    }
+
+    p {
+      color: var(--muted);
+      margin: 6px 0 0;
+    }
+
+    .meta {
+      display: grid;
+      gap: 6px;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .upload {
+      margin-top: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    input[type="file"] {
+      color: var(--text);
+      background: rgba(15, 23, 42, 0.35);
+      border: 1px solid var(--border);
+      padding: 10px;
+      border-radius: 10px;
+    }
+
+    button {
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      border: none;
+      color: #0b1220;
+      font-weight: 700;
+      padding: 10px 14px;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+"""
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -46,11 +138,9 @@ def _check_auth(req: Request) -> bool:
 def _require_auth() -> Response | None:
     if _check_auth(request):
         return None
-    return Response(
-        "Authentication required.",
-        401,
-        {"WWW-Authenticate": 'Basic realm="Backtest Login"'},
-    )
+    response = _render_error("Authentication required.", 401)
+    response.headers["WWW-Authenticate"] = 'Basic realm="Backtest Login"'
+    return response
 
 
 @app.before_request
@@ -61,15 +151,31 @@ def enforce_basic_auth() -> Response | None:
 def _render_error(message: str, status_code: int = 400) -> Response:
     html = f"""
     <html lang="en">
-      <head><meta charset="utf-8"><title>Backtest Error</title></head>
-      <body style="font-family:Arial,sans-serif;padding:24px;">
-        <h2>Upload Error</h2>
-        <p>{message}</p>
-        <p><a href="/">Back to upload</a></p>
+      <head>
+        <meta charset="utf-8">
+        <title>Backtest Error</title>
+        <style>{BASE_STYLE}</style>
+      </head>
+      <body>
+        <div class="wrap">
+          <div class="panel">
+            <h2>Upload Error</h2>
+            <p>{message}</p>
+            <p><a href="/">Back to upload</a></p>
+          </div>
+        </div>
       </body>
     </html>
     """
     return Response(html, status=status_code, mimetype="text/html")
+
+
+@app.errorhandler(Exception)
+def handle_exception(_err: Exception) -> Response:
+    if isinstance(_err, HTTPException):
+        message = _err.description or "Request failed."
+        return _render_error(message, _err.code or 400)
+    return _render_error("Something went wrong. Please try again.", 500)
 
 
 def _load_rows(jsonl_path: Path) -> list[dict[str, Any]]:
@@ -106,19 +212,31 @@ def _validate_candles(csv_path: Path) -> str | None:
 
 @app.route("/", methods=["GET"])
 def index() -> Response:
-    html = """
+    html = f"""
     <html lang="en">
       <head>
         <meta charset="utf-8" />
         <title>GU Backtest Upload</title>
+        <style>{BASE_STYLE}</style>
       </head>
-      <body style="font-family:Arial,sans-serif;padding:24px;">
-        <h2>Upload 1M CSV (Max 1 Month)</h2>
-        <form action="/run" method="post" enctype="multipart/form-data">
-          <input type="file" name="csv" accept=".csv,.txt" required />
-          <button type="submit">Run Backtest</button>
-        </form>
-        <p>Files are processed in memory and deleted immediately after results render.</p>
+      <body>
+        <div class="wrap">
+          <div class="panel">
+            <h1>GU Backtest Upload</h1>
+            <p>Upload 1M candles and get the summary + viewer in seconds.</p>
+            <div class="upload">
+              <form action="/run" method="post" enctype="multipart/form-data">
+                <input type="file" name="csv" accept=".csv,.txt" required />
+                <button type="submit">Run Backtest</button>
+              </form>
+            </div>
+            <div class="meta">
+              <div>Max file size: 10 MB</div>
+              <div>Max range: 1 month</div>
+              <div>Files deleted immediately after processing</div>
+            </div>
+          </div>
+        </div>
       </body>
     </html>
     """

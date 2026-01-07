@@ -417,8 +417,16 @@ class SignalEngine:
             rules_passed.append("STEP_7_RISK_SIZING_OK")
 
         # STEP 8 — TAKE PROFIT PLAN CHECK
+        tp_leg = self._resolve_tp_leg(active_leg, structure_event, candles_15m, direction)
+        if tp_leg is None:
+            if config.TP_LEG_FALLBACK_TO_4H:
+                tp_leg = active_leg
+                rules_passed.append("STEP_8_TP_LEG_FALLBACK_4H")
+            else:
+                return fail("STEP_8_TP_LEG_MISSING")
+
         take_profit_plan = self._validate_take_profit_plan(
-            direction, entry_price, active_leg
+            direction, entry_price, tp_leg
         )
         if take_profit_plan is None:
             return fail("STEP_8_TP_PLAN_MISSING")
@@ -725,20 +733,50 @@ class SignalEngine:
                     return candle.time_utc
         return None
 
+    def _resolve_tp_leg(
+        self,
+        active_leg: ActiveLeg,
+        structure_event: BreakEvent | None,
+        candles_15m: list[Candle],
+        direction: BiasDirection,
+    ) -> ActiveLeg | None:
+        if config.TP_LEG_SOURCE != "15M":
+            return active_leg
+        if structure_event is None or structure_event.defining_swing_price is None:
+            return None
+        start_time = (
+            candles_15m[structure_event.defining_swing_index].time_utc
+            if structure_event.defining_swing_index is not None
+            and 0 <= structure_event.defining_swing_index < len(candles_15m)
+            else candles_15m[structure_event.index].time_utc
+        )
+        if direction == "SELL":
+            end_price = candles_15m[structure_event.index].low
+        else:
+            end_price = candles_15m[structure_event.index].high
+        return ActiveLeg(
+            start_price=structure_event.defining_swing_price,
+            end_price=end_price,
+            start_time=start_time,
+            end_time=structure_event.time_utc,
+        )
+
     def _validate_take_profit_plan(
         self, direction: BiasDirection, entry_price: float, active_leg: ActiveLeg
     ) -> tuple[str, float, float] | None:
         leg_range = active_leg.high - active_leg.low
         if leg_range <= 0:
             return None
+        if not (0 < config.TP1_LEG_PERCENT < 1 and 0 < config.TP2_LEG_PERCENT < 1):
+            return None
         if direction == "SELL":
-            tp1 = active_leg.high - (leg_range * 0.5)
-            tp2 = active_leg.high - (leg_range * 0.9)
+            tp1 = active_leg.high - (leg_range * config.TP1_LEG_PERCENT)
+            tp2 = active_leg.high - (leg_range * config.TP2_LEG_PERCENT)
             # if not (entry_price > tp1 > tp2):
             # return None
         else:
-            tp1 = active_leg.low + (leg_range * 0.5)
-            tp2 = active_leg.low + (leg_range * 0.9)
+            tp1 = active_leg.low + (leg_range * config.TP1_LEG_PERCENT)
+            tp2 = active_leg.low + (leg_range * config.TP2_LEG_PERCENT)
             # if not (entry_price < tp1 < tp2):
             # return None
         return "PLAN_A", tp1, tp2  # Return regardless

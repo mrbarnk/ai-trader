@@ -43,7 +43,7 @@ PREMIUM_CROSS_LEVEL = 0.75  # Need to reach 75%+ of leg initially
 DISCOUNT_CROSS_LEVEL = 0.25  # Need to reach 25%- of leg initially
 
 ENABLE_SPREAD_FILTER = False
-MAX_SPREAD_PIPS = 2.0
+MAX_SPREAD_PIPS = 4.0
 ASSUME_ZERO_SPREAD = False  # Account for spread in backtest
 
 # FIXED: Increase SL buffer to account for spread and slippage in backtest

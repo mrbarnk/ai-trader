@@ -52,31 +52,58 @@ def find_swings(candles: list[Candle], left: int, right: int) -> list[SwingPoint
 
 
 def find_breaks(candles: list[Candle], swings: list[SwingPoint]) -> list[BreakEvent]:
+    """
+    MODIFIED: Allow iBOS by tracking ALL unbroken swings
+    """
     swings_by_index = {s.index: s for s in swings}
-    last_swing_high: SwingPoint | None = None
-    last_swing_low: SwingPoint | None = None
+    
+    # CHANGED: Track ALL unbroken swings, not just last one
+    unbroken_highs: list[SwingPoint] = []  # All highs not yet broken
+    unbroken_lows: list[SwingPoint] = []   # All lows not yet broken
+    
     last_swing_high_seen: SwingPoint | None = None
     last_swing_low_seen: SwingPoint | None = None
     breaks: list[BreakEvent] = []
+    
+    # Track trend for CHoCH vs BOS
+    current_trend: BreakDirection | None = None
+    last_structure_high: float | None = None
+    last_structure_low: float | None = None
 
     for i, candle in enumerate(candles):
         swing = swings_by_index.get(i)
         if swing:
             if swing.kind == "high":
-                last_swing_high = swing
+                unbroken_highs.append(swing)  # Add to unbroken list
                 last_swing_high_seen = swing
             else:
-                last_swing_low = swing
+                unbroken_lows.append(swing)   # Add to unbroken list
                 last_swing_low_seen = swing
 
-        if last_swing_high and candle.close > last_swing_high.price:
+        # CHANGED: Check if we break ANY unbroken high (bull break)
+        broken_highs = [h for h in unbroken_highs if candle.close > h.price]
+        if broken_highs:
+            # Take the highest one broken (strongest break)
+            highest_broken = max(broken_highs, key=lambda h: h.price)
+            
+            # Determine event type
+            event_type: EventType = "BOS"
+            if current_trend == "bear":
+                event_type = "CHoCH"
+                current_trend = "bull"
+            elif current_trend == "bull":
+                event_type = "BOS"
+            else:
+                current_trend = "bull"
+                event_type = "BOS"
+            
             breaks.append(
                 BreakEvent(
                     index=i,
                     time_utc=candle.time_utc,
                     direction="bull",
-                    event_type="BOS",
-                    break_level=last_swing_high.price,
+                    event_type=event_type,
+                    break_level=highest_broken.price,
                     close_price=candle.close,
                     defining_swing_index=(
                         last_swing_low_seen.index if last_swing_low_seen else None
@@ -86,16 +113,34 @@ def find_breaks(candles: list[Candle], swings: list[SwingPoint]) -> list[BreakEv
                     ),
                 )
             )
-            last_swing_high = None
+            
+            # Remove all broken highs from unbroken list
+            unbroken_highs = [h for h in unbroken_highs if h.price >= highest_broken.price]
 
-        if last_swing_low and candle.close < last_swing_low.price:
+        # CHANGED: Check if we break ANY unbroken low (bear break)
+        broken_lows = [l for l in unbroken_lows if candle.close < l.price]
+        if broken_lows:
+            # Take the lowest one broken (strongest break)
+            lowest_broken = min(broken_lows, key=lambda l: l.price)
+            
+            # Determine event type
+            event_type: EventType = "BOS"
+            if current_trend == "bull":
+                event_type = "CHoCH"
+                current_trend = "bear"
+            elif current_trend == "bear":
+                event_type = "BOS"
+            else:
+                current_trend = "bear"
+                event_type = "BOS"
+            
             breaks.append(
                 BreakEvent(
                     index=i,
                     time_utc=candle.time_utc,
                     direction="bear",
-                    event_type="BOS",
-                    break_level=last_swing_low.price,
+                    event_type=event_type,
+                    break_level=lowest_broken.price,
                     close_price=candle.close,
                     defining_swing_index=(
                         last_swing_high_seen.index if last_swing_high_seen else None
@@ -105,32 +150,11 @@ def find_breaks(candles: list[Candle], swings: list[SwingPoint]) -> list[BreakEv
                     ),
                 )
             )
-            last_swing_low = None
+            
+            # Remove all broken lows from unbroken list
+            unbroken_lows = [l for l in unbroken_lows if l.price <= lowest_broken.price]
 
-    if not breaks:
-        return breaks
-
-    events: list[BreakEvent] = []
-    prev_direction: BreakDirection | None = None
-    for event in breaks:
-        event_type: EventType = "BOS"
-        if prev_direction and event.direction != prev_direction:
-            event_type = "CHoCH"
-        events.append(
-            BreakEvent(
-                index=event.index,
-                time_utc=event.time_utc,
-                direction=event.direction,
-                event_type=event_type,
-                break_level=event.break_level,
-                close_price=event.close_price,
-                defining_swing_index=event.defining_swing_index,
-                defining_swing_price=event.defining_swing_price,
-            )
-        )
-        prev_direction = event.direction
-    return events
-
+    return breaks
 
 def latest_event(
     events: list[BreakEvent],
@@ -154,25 +178,50 @@ def has_liquidity_sweep(
     pip_size: float,
     min_pips: int,
 ) -> bool:
+    """
+    FIXED: More strict liquidity sweep detection with wick requirement
+    
+    A true liquidity sweep should:
+    1. Go beyond the swing point by min_pips
+    2. Close back on the other side of the swing
+    3. Have a significant wick showing rejection
+    """
     if end_index <= 0:
         return False
+    
     if direction == "bear":
+        # For bear sweeps: looking for sweep ABOVE high (grab buy-side liquidity)
         swing_highs = [s for s in swings if s.kind == "high" and s.index < end_index]
         if not swing_highs:
             return False
         last_high = swing_highs[-1]
         sweep_level = last_high.price + (pip_size * min_pips)
+        
         for candle in candles[last_high.index + 1 : end_index + 1]:
-            if candle.high >= sweep_level and candle.close < last_high.price:
-                return True
+            # Must sweep above the level
+            if candle.high >= sweep_level:
+                # Must close back below the swing high (rejection)
+                if candle.close < last_high.price:
+                    # FIXED: Check wick size is significant
+                    wick_size = (candle.high - candle.close) / pip_size
+                    if wick_size >= min_pips:
+                        return True
         return False
-
+    
+    # For bull sweeps: looking for sweep BELOW low (grab sell-side liquidity)
     swing_lows = [s for s in swings if s.kind == "low" and s.index < end_index]
     if not swing_lows:
         return False
     last_low = swing_lows[-1]
     sweep_level = last_low.price - (pip_size * min_pips)
+    
     for candle in candles[last_low.index + 1 : end_index + 1]:
-        if candle.low <= sweep_level and candle.close > last_low.price:
-            return True
+        # Must sweep below the level
+        if candle.low <= sweep_level:
+            # Must close back above the swing low (rejection)
+            if candle.close > last_low.price:
+                # FIXED: Check wick size is significant
+                wick_size = (candle.close - candle.low) / pip_size
+                if wick_size >= min_pips:
+                    return True
     return False

@@ -310,9 +310,14 @@
               <th>Dir</th>
               <th>Entry</th>
               <th>SL</th>
+              <th>SL Pips</th>
               <th>TP1</th>
+              <th>TP1 Pips</th>
               <th>TP2</th>
+              <th>TP2 Pips</th>
               <th>Outcome</th>
+              <th>Entry Fill</th>
+              <th>Duration</th>
               <th>R</th>
               <th>P/L</th>
               <th>% Gain</th>
@@ -559,6 +564,62 @@
         return { r: rMultiple, money, percent, closed };
       }
 
+      function parseTime(value) {
+        if (!value) return null;
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return null;
+        return parsed;
+      }
+
+      function resolveExitTime(row) {
+        const outcome = row.outcome;
+        if (!outcome) return null;
+        if (["SL_HIT", "TP1_THEN_SL", "TP1_THEN_BE"].includes(outcome)) {
+          return parseTime(row.sl_time);
+        }
+        if (["TP2_HIT", "TP1_THEN_TP2"].includes(outcome)) {
+          return parseTime(row.tp2_time);
+        }
+        return null;
+      }
+
+      function formatDurationMs(ms) {
+        if (ms === null || ms === undefined || Number.isNaN(ms) || ms <= 0) return "-";
+        const totalMinutes = Math.round(ms / 60000);
+        if (totalMinutes < 60) return `${totalMinutes}m`;
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        return `${hours}h ${minutes}m`;
+      }
+
+      function calcPipDistances(row) {
+        const entry = Number(row.entry);
+        const stop = Number(row.stop_loss);
+        if (Number.isNaN(entry) || Number.isNaN(stop)) {
+          return { slPips: null, tp1Pips: null, tp2Pips: null };
+        }
+
+        let stopPips = Number(row.stop_distance_pips);
+        if (Number.isNaN(stopPips) || stopPips <= 0) {
+          stopPips = null;
+        }
+
+        let pipSize = null;
+        if (stopPips && Math.abs(entry - stop) > 0) {
+          pipSize = Math.abs(entry - stop) / stopPips;
+        } else {
+          pipSize = 0.0001;
+        }
+
+        const slPips = stopPips ?? Math.abs(entry - stop) / pipSize;
+        const tp1 = Number(row.tp1_price);
+        const tp2 = Number(row.tp2_price);
+        const tp1Pips = Number.isNaN(tp1) ? null : Math.abs(tp1 - entry) / pipSize;
+        const tp2Pips = Number.isNaN(tp2) ? null : Math.abs(tp2 - entry) / pipSize;
+
+        return { slPips, tp1Pips, tp2Pips };
+      }
+
       function renderStats(summary) {
         const items = [
           { label: "Total Records", value: summary.total },
@@ -699,6 +760,11 @@
           .map((row) => {
             const badgeClass = row.decision === "TRADE" ? "trade" : "no-trade";
             const pnl = calcPnL(row);
+            const pips = calcPipDistances(row);
+            const entryFill = parseTime(row.entry_filled_time);
+            const exitTime = resolveExitTime(row);
+            const durationMs =
+              entryFill && exitTime ? exitTime.getTime() - entryFill.getTime() : null;
             return `
               <tr>
                 <td>${row.timestamp_utc || "-"}</td>
@@ -707,9 +773,14 @@
                 <td>${row.direction || "-"}</td>
                 <td>${row.entry ?? "-"}</td>
                 <td>${row.stop_loss ?? "-"}</td>
+                <td>${formatNumber(pips.slPips, 1)}</td>
                 <td>${row.tp1_price ?? "-"}</td>
+                <td>${formatNumber(pips.tp1Pips, 1)}</td>
                 <td>${row.tp2_price ?? "-"}</td>
+                <td>${formatNumber(pips.tp2Pips, 1)}</td>
                 <td>${row.outcome || "-"}</td>
+                <td>${row.entry_filled_time || "-"}</td>
+                <td>${formatDurationMs(durationMs)}</td>
                 <td>${formatSigned(pnl.r)}</td>
                 <td>${formatSigned(pnl.money)}</td>
                 <td>${formatPercent(pnl.percent)}</td>

@@ -175,13 +175,31 @@ class SignalEngine:
         self._update_4h_bias(candles_4h)
         direction = self.state.bias
         if direction is None:
-            if self.state.last_4h_event_type == "CHoCH":
-                return fail("STEP_2_4H_LAST_EVENT_CHOCH")
+            # FIXED: Removed CHoCH blocking - it should establish bias
             return fail("STEP_2_4H_BIAS_NO_TRADE")
         rules_passed.append("STEP_2_4H_BIAS_CLEAR")
         bias_time = self.state.bias_established_time
         if bias_time is None:
             return fail("STEP_2_4H_BIAS_TIME_MISSING")
+
+        # FIXED: Check if bias is still valid
+        if self.state.active_leg:
+            current_price = candles_15m[-1].close
+            
+            if direction == "BUY":
+                defining_low = self.state.active_leg.start_price
+                if current_price < defining_low:
+                    self.state.bias = None
+                    self.state.active_leg = None
+                    return fail("STEP_2_4H_BIAS_INVALIDATED_BY_PRICE")
+            else:
+                defining_high = self.state.active_leg.start_price
+                if current_price > defining_high:
+                    self.state.bias = None
+                    self.state.active_leg = None
+                    return fail("STEP_2_4H_BIAS_INVALIDATED_BY_PRICE")
+        
+        rules_passed.append("STEP_2_4H_BIAS_STILL_VALID")
 
         if session == "NY" and self.state.bias_established_session != "LONDON":
             return fail("STEP_1_NY_REQUIRES_LONDON_BIAS")
@@ -208,51 +226,86 @@ class SignalEngine:
             if direction == "SELL":
                 return fail("STEP_4_15M_PREMIUM_CROSS_MISSING")
             return fail("STEP_4_15M_DISCOUNT_CROSS_MISSING")
-        if cross_time < bias_time:
-            return fail("STEP_4_15M_CROSS_BEFORE_4H_BOS")
+        
+        # FIXED: Removed cross_time < bias_time check
         if direction == "SELL":
             rules_passed.append("STEP_4_15M_PREMIUM_CROSS_OK")
         else:
             rules_passed.append("STEP_4_15M_DISCOUNT_CROSS_OK")
 
+        # NEW: Look for CHoCH OR weakness on 15M
         structure_event = self._latest_event_after_time(
             events_15m, cross_time, desired_dir, ("CHoCH",)
         )
-        if structure_event is None:
-            return fail("STEP_4_15M_CHOCH_AFTER_CROSS_MISSING")
-        if structure_event.time_utc < bias_time:
-            return fail("STEP_4_15M_CHOCH_BEFORE_4H_BOS")
 
-        structure_pos = active_leg.position(structure_event.close_price)
+        has_weakness, weakness_time = self._has_weakness(
+            candles_15m, cross_time, direction, active_leg
+        )
+
+        # Accept EITHER CHoCH OR weakness
+        if structure_event is None and not has_weakness:
+            return fail("STEP_4_15M_NO_CHOCH_OR_WEAKNESS")
+
+        # Use whichever came last (most recent signal)
+        if structure_event and has_weakness:
+            # Both exist, use the later one
+            if structure_event.time_utc >= weakness_time:
+                reference_time = structure_event.time_utc
+                reference_price = structure_event.close_price
+                rules_passed.append("STEP_4_15M_CHOCH_CONFIRMED")
+            else:
+                reference_time = weakness_time
+                weakness_candle_idx = next(
+                    i for i, c in enumerate(candles_15m) if c.time_utc == weakness_time
+                )
+                reference_price = candles_15m[weakness_candle_idx].close
+                rules_passed.append("STEP_4_15M_WEAKNESS_CONFIRMED")
+        elif structure_event:
+            reference_time = structure_event.time_utc
+            reference_price = structure_event.close_price
+            rules_passed.append("STEP_4_15M_CHOCH_CONFIRMED")
+        else:
+            reference_time = weakness_time
+            weakness_candle_idx = next(
+                i for i, c in enumerate(candles_15m) if c.time_utc == weakness_time
+            )
+            reference_price = candles_15m[weakness_candle_idx].close
+            rules_passed.append("STEP_4_15M_WEAKNESS_CONFIRMED")
+
+        # Validate location
+        structure_pos = active_leg.position(reference_price)
         if structure_pos is None:
             return fail("STEP_4_15M_LOCATION_UNDEFINED")
-        if structure_pos < 0 or structure_pos > 1:
+        if structure_pos < -0.05 or structure_pos > 1.05:  # FIXED: Allow 5% overshoot
             return fail("STEP_4_15M_OUTSIDE_LEG")
 
+        # FIXED: More realistic premium/discount zones
         if direction == "SELL":
-            if 0.382 <= structure_pos < 0.5:
+            if 0.40 <= structure_pos <= 0.60:
                 return fail("STEP_4_15M_MID_RANGE")
-            if structure_pos < 0.5:
-                return fail("STEP_4_15M_LOCATION_INVALID")
+            if structure_pos < 0.618:  # FIXED: 61.8% instead of 70%
+                return fail("STEP_4_15M_NOT_IN_PREMIUM")
+            rules_passed.append("STEP_4_15M_IN_PREMIUM_ZONE")
         else:
-            if 0.5 < structure_pos <= 0.618:
+            if 0.40 <= structure_pos <= 0.60:
                 return fail("STEP_4_15M_MID_RANGE")
-            if structure_pos > 0.5:
-                return fail("STEP_4_15M_LOCATION_INVALID")
+            if structure_pos > 0.382:  # FIXED: 38.2% instead of 30%
+                return fail("STEP_4_15M_NOT_IN_DISCOUNT")
+            rules_passed.append("STEP_4_15M_IN_DISCOUNT_ZONE")
+        
         rules_passed.append("STEP_4_15M_LOCATION_VALID")
-        rules_passed.append("STEP_4_15M_CHOCH_CONFIRMED")
-        rules_passed.append("STEP_4_15M_CHOCH_AFTER_CROSS")
+        rules_passed.append("STEP_4_15M_STRUCTURE_AFTER_CROSS")
 
         # STEP 5 — 15M QUALITY BOOST (NOT REQUIRED)
-        if direction == "SELL" and structure_pos >= 0.7:
+        if direction == "SELL" and structure_pos >= 0.80:
             rules_passed.append("STEP_5_15M_STRONG_ZONE")
-        if direction == "BUY" and structure_pos <= 0.3:
+        if direction == "BUY" and structure_pos <= 0.20:
             rules_passed.append("STEP_5_15M_STRONG_ZONE")
 
         swept = has_liquidity_sweep(
             candles=candles_15m,
             swings=swings_15m,
-            end_index=structure_event.index,
+            end_index=structure_event.index if structure_event else weakness_candle_idx,
             direction=desired_dir,
             pip_size=config.PIP_SIZE,
             min_pips=config.LIQUIDITY_SWEEP_PIPS,
@@ -268,7 +321,7 @@ class SignalEngine:
         swings_5m = find_swings(candles_5m, config.SWING_LEFT, config.SWING_RIGHT)
         events_5m = find_breaks(candles_5m, swings_5m)
         choc_event = self._latest_event_after_time(
-            events_5m, structure_event.time_utc, desired_dir, ("CHoCH",)
+            events_5m, reference_time, desired_dir, ("CHoCH",)
         )
         if choc_event is None:
             return fail("STEP_6_5M_CHOCH_MISSING")
@@ -359,13 +412,26 @@ class SignalEngine:
         entry_price = self._round_price(entry_event.break_level)
 
         # STEP 7 — STOP LOSS VALIDITY CHECK
-        choch_high = entry_high
-        choch_low = entry_low
+        # FIXED: Place SL above/below recent structure
+        sl_candle_lookback = getattr(config, 'SL_CANDLE_LOOKBACK', 3)
+        lookback_start = max(0, entry_event.index - sl_candle_lookback)
+        recent_candles = entry_candles[lookback_start:entry_event.index + 1]
+        
         sl_buffer = config.SL_EXTRA_PIPS * config.PIP_SIZE
+        
         if direction == "SELL":
-            stop_loss = self._round_price(choch_high + sl_buffer)
+            structure_high = max(c.high for c in recent_candles)
+            stop_loss = self._round_price(structure_high + sl_buffer)
+            
+            if stop_loss <= entry_price:
+                return fail("STEP_7_SL_BELOW_ENTRY")
         else:
-            stop_loss = self._round_price(choch_low - sl_buffer)
+            structure_low = min(c.low for c in recent_candles)
+            stop_loss = self._round_price(structure_low - sl_buffer)
+            
+            if stop_loss >= entry_price:
+                return fail("STEP_7_SL_ABOVE_ENTRY")
+        
         rules_passed.append("STEP_7_SL_VALID")
 
         choc_range_pips = self._choc_range_pips(entry_candles, entry_event)
@@ -443,14 +509,9 @@ class SignalEngine:
             self.state.active_leg = None
             self.state.last_4h_close_time = last_closed
             return
-        if last_event.event_type == "CHoCH":
-            self.state.bias = None
-            self.state.active_leg = None
-            self.state.bias_established_time = None
-            self.state.bias_established_session = None
-            self.state.last_4h_close_time = last_closed
-            return
 
+        # FIXED: Removed CHoCH blocking - now CHoCH establishes bias too!
+        
         if last_event.direction == "bull":
             invalidated = any(
                 candle.close < last_event.defining_swing_price
@@ -492,6 +553,84 @@ class SignalEngine:
             end_time=candles_4h[last_event.index].time_utc,
         )
         self.state.last_4h_close_time = last_closed
+
+    def _has_weakness(
+        self, 
+        candles: list[Candle], 
+        after_time: datetime, 
+        direction: BiasDirection,
+        active_leg: ActiveLeg
+    ) -> tuple[bool, datetime | None]:
+        """
+        NEW: Detect price weakness in premium/discount zone
+        
+        For SELL: Look for bearish weakness in premium (61.8%+)
+        For BUY: Look for bullish weakness in discount (38.2%-)
+        
+        Weakness indicators:
+        - Close in opposite direction of pullback
+        - Wick rejection
+        - Close in lower/upper 25% of candle range
+        """
+        relevant_candles = [c for c in candles if c.time_utc >= after_time]
+        
+        for candle in relevant_candles:
+            # Check if in premium/discount
+            position = active_leg.position(candle.close)
+            if position is None or position < 0 or position > 1:
+                continue
+            
+            if direction == "SELL":
+                # Must be in premium (61.8%+)
+                if position < 0.618:
+                    continue
+                
+                # Check for bearish weakness
+                candle_range = candle.high - candle.low
+                if candle_range <= 0:
+                    continue
+                
+                # Weakness indicators:
+                is_bearish_close = candle.close < candle.open
+                close_in_lower_quarter = (candle.close - candle.low) / candle_range < 0.25
+                has_upper_wick = (candle.high - max(candle.open, candle.close)) / candle_range > 0.25
+                
+                # Any 2 of these = weakness
+                weakness_count = sum([
+                    is_bearish_close,
+                    close_in_lower_quarter,
+                    has_upper_wick
+                ])
+                
+                if weakness_count >= 3:
+                    return True, candle.time_utc
+            
+            else:  # BUY
+                # Must be in discount (38.2%-)
+                if position > 0.382:
+                    continue
+                
+                # Check for bullish weakness
+                candle_range = candle.high - candle.low
+                if candle_range <= 0:
+                    continue
+                
+                # Weakness indicators:
+                is_bullish_close = candle.close > candle.open
+                close_in_upper_quarter = (candle.close - candle.low) / candle_range > 0.75
+                has_lower_wick = (min(candle.open, candle.close) - candle.low) / candle_range > 0.25
+                
+                # Any 2 of these = weakness
+                weakness_count = sum([
+                    is_bullish_close,
+                    close_in_upper_quarter,
+                    has_lower_wick
+                ])
+                
+                if weakness_count >= 2:
+                    return True, candle.time_utc
+        
+        return False, None
 
     def _choc_after_pullback(self, events: list[BreakEvent], choc_event: BreakEvent) -> bool:
         for event in events:

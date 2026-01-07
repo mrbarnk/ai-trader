@@ -59,3 +59,7 @@ Render:
 ## API
 
 API docs are available at `/api/docs` once the service is running.
+
+Model selection:
+- Set `MODEL_MODE = "aggressive"` or `"passive"` in `src/trader/config.py`
+- Or update `model_mode` via `PUT /api/config`

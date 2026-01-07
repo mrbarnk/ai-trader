@@ -139,6 +139,7 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_CSV_BYTES
 VIEWER_HTML = (BASE_DIR / "backtest_viewer.html").read_text(encoding="utf-8")
 
 DEFAULT_USER_CONFIG: dict[str, Any] = {
+    "model_mode": "aggressive",
     "tp_leg_source": "4H",
     "tp1_leg_percent": 0.5,
     "tp2_leg_percent": 0.9,
@@ -164,7 +165,13 @@ CONFIG_FLOAT_KEYS = {
     "risk_per_trade_pct",
 }
 CONFIG_BOOL_KEYS = {"tp3_enabled", "enable_break_even", "use_real_balance", "use_1m_entry"}
-CONFIG_STRING_KEYS = {"tp_leg_source", "tp3_leg_source", "metaapi_account_id", "metaapi_token"}
+CONFIG_STRING_KEYS = {
+    "model_mode",
+    "tp_leg_source",
+    "tp3_leg_source",
+    "metaapi_account_id",
+    "metaapi_token",
+}
 ALLOWED_CONFIG_KEYS = CONFIG_FLOAT_KEYS | CONFIG_BOOL_KEYS | CONFIG_STRING_KEYS
 
 
@@ -577,6 +584,7 @@ def api_docs() -> Response:
 tp3_enabled, tp3_leg_source, tp3_leg_percent,
 sl_extra_pips, enable_break_even, use_real_balance,
 starting_balance, risk_per_trade_pct, use_1m_entry,
+model_mode,
 metaapi_account_id, metaapi_token</code></pre>
           </div>
         </div>

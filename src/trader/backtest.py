@@ -11,7 +11,7 @@ from pathlib import Path
 from . import config
 from .logger import SignalLogger
 from .models import Candle
-from .rules_engine import SignalEngine, SignalOutput
+from .engine_factory import get_engine
 from .time_utils import session_from_utc
 from .timeframes import (
     TIMEFRAME_H4,
@@ -619,7 +619,11 @@ def run_backtest(
         series[TIMEFRAME_D1] = build_series(candles_d1, TIMEFRAME_D1)
 
     provider = HistoricalCandleProvider(series)
-    engine = SignalEngine(symbol=config.SYMBOL_VARIANTS[0], candle_provider=provider)
+    engine = get_engine(
+        symbol=config.SYMBOL_VARIANTS[0],
+        candle_provider=provider,
+        mode=config.MODEL_MODE,
+    )
     logger = SignalLogger(str(output_path))
     outcome_logger = SignalLogger(str(outcome_path))
 
@@ -822,7 +826,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_outcome_record(
-    signal: SignalOutput,
+    signal,
     series: dict[int, TimeframeSeries],
     entry_timeframe: int,
 ) -> dict:

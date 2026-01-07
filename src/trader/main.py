@@ -5,7 +5,7 @@ import time as time_module
 from . import config
 from .logger import SignalLogger
 from .mt5_client import get_tick_time, initialize, resolve_symbol, shutdown
-from .rules_engine import SignalEngine
+from .engine_factory import get_engine
 from .time_utils import session_from_utc
 from .time_utils import broker_epoch_to_utc
 
@@ -14,7 +14,7 @@ def main() -> None:
     initialize()
     symbol = resolve_symbol()
     logger = SignalLogger("logs/signals.jsonl")
-    engine = SignalEngine(symbol)
+    engine = get_engine(symbol, mode=config.MODEL_MODE)
 
     try:
         while True:

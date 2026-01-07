@@ -3,6 +3,9 @@ from datetime import time
 SYMBOL_CANONICAL = "GU"
 SYMBOL_VARIANTS = ("GBPUSD", "GBPUSDm", "GBPUSD.r")
 
+# Strategy model: "aggressive" or "passive"
+MODEL_MODE = "aggressive"
+
 PIP_SIZE = 0.0001
 # FIXED: Increase minimum sweep size to avoid noise
 LIQUIDITY_SWEEP_PIPS = 5  # Was 1, now 5 for actual sweeps

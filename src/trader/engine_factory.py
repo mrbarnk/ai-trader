@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Literal
 
 from . import config
-from .rules_engine import SignalEngine as AggressiveEngine
-from .rules_engine_passive import SignalEngine as PassiveEngine
+from .strategies.aggressive.rules_engine import SignalEngine as AggressiveEngine
+from .strategies.passive.rules_engine import SignalEngine as PassiveEngine
 
 
 ModelMode = Literal["aggressive", "passive"]

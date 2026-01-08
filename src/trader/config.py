@@ -5,6 +5,8 @@ SYMBOL_VARIANTS = ("GBPUSD", "GBPUSDm", "GBPUSD.r")
 
 # Strategy model: "aggressive" or "passive"
 MODEL_MODE = "aggressive"
+MODEL_TAGS = {"aggressive": "AGGR", "passive": "PASS"}
+MODEL_MAGICS = {"aggressive": 1001, "passive": 2001}
 
 PIP_SIZE = 0.0001
 # FIXED: Increase minimum sweep size to avoid noise

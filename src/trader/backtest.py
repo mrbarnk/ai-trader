@@ -559,6 +559,7 @@ def run_backtest(
     start: datetime | None,
     end: datetime | None,
     model_mode: str | None = None,
+    progress_callback=None,
 ) -> None:
     """
     ✅ FIXED: Main backtest loop with proper risk management
@@ -638,10 +639,30 @@ def run_backtest(
     open_trades = []
     seen_trade_keys: set[tuple] = set()
     
+    total_steps = max(len(step_candles) - 1, 1)
+    last_percent = -1
+
+    def report_progress(step_index: int) -> None:
+        nonlocal last_percent
+        if progress_callback is None:
+            return
+        percent = int((step_index / total_steps) * 100)
+        if percent == last_percent:
+            return
+        last_percent = percent
+        try:
+            progress_callback(step_index, total_steps)
+        except Exception:
+            return
+
+    report_progress(0)
+
     # ✅ Main loop with FIXED risk management
     for i, candle in enumerate(step_candles):
         if i < 1:
             continue
+
+        report_progress(i)
         
         now_utc = step_candles[i-1].time_utc + timedelta(seconds=step_seconds + 1)
         current_date = now_utc.date()
@@ -758,8 +779,7 @@ def run_backtest(
         
         # ✅ Evaluate for new signals
         signal = engine.evaluate(now_utc)
-        logger.log(signal)
-        
+
         if signal.decision == "TRADE":
             signal_key = trade_identity(
                 {
@@ -774,6 +794,7 @@ def run_backtest(
                 continue
             if any(trade_identity(trade) == signal_key for trade in open_trades):
                 continue
+            logger.log(signal)
             # ✅ Calculate position size based on current balance
             position_size = calculate_position_size(
                 balance=current_balance,
@@ -781,7 +802,7 @@ def run_backtest(
                 stop_loss=signal.stop_loss,
                 risk_percent=1.0  # Risk 1% per trade
             )
-            
+
             record = build_outcome_record(
                 signal=signal,
                 series=series,
@@ -791,7 +812,11 @@ def run_backtest(
             record['position_size_lots'] = position_size  # ✅ Store calculated size
             open_trades.append(record)
             seen_trade_keys.add(signal_key)
+        else:
+            logger.log(signal)
     
+    report_progress(total_steps)
+
     # Print summary
     total_pnl = current_balance - starting_balance
     total_return = (total_pnl / starting_balance * 100) if starting_balance else 0.0

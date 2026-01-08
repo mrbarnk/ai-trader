@@ -39,8 +39,41 @@ if [ -f "$VENV_DIR/bin/alembic" ]; then
   "$VENV_DIR/bin/alembic" upgrade head
 fi
 
+SUDO_CMD=""
+if command -v sudo >/dev/null 2>&1; then
+  if sudo -n true >/dev/null 2>&1; then
+    SUDO_CMD="sudo -n"
+  fi
+fi
+
+reload_service() {
+  if [ -n "$SUDO_CMD" ]; then
+    $SUDO_CMD systemctl reload "$SERVICE_NAME"
+    return
+  fi
+  if systemctl --user list-unit-files 2>/dev/null | grep -q "^${SERVICE_NAME}\\.service"; then
+    systemctl --user reload "$SERVICE_NAME"
+    return
+  fi
+  echo "No sudo permission to reload ${SERVICE_NAME}. Configure passwordless sudo or a user service." >&2
+  exit 1
+}
+
+start_service() {
+  if [ -n "$SUDO_CMD" ]; then
+    $SUDO_CMD systemctl start "$SERVICE_NAME"
+    return
+  fi
+  if systemctl --user list-unit-files 2>/dev/null | grep -q "^${SERVICE_NAME}\\.service"; then
+    systemctl --user start "$SERVICE_NAME"
+    return
+  fi
+  echo "No sudo permission to start ${SERVICE_NAME}. Configure passwordless sudo or a user service." >&2
+  exit 1
+}
+
 if systemctl is-active --quiet "$SERVICE_NAME"; then
-  sudo systemctl reload "$SERVICE_NAME"
+  reload_service
 else
-  sudo systemctl start "$SERVICE_NAME"
+  start_service
 fi

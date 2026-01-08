@@ -1414,15 +1414,36 @@ interface UserStrategyConfig {
   tp3Enabled: boolean;
   tp3LegSource: "4H" | "15M" | "D1";
   tp3LegPercent: number;          // 0–1
-  premiumCrossLevel: number;      // 0–1
-  discountCrossLevel: number;     // 0–1
   slExtraPips: number;
   enableBreakEven: boolean;
-  riskPerTradePct: number;
-  startingBalance: number;
+
+  premiumCrossLevel: number;      // 0–1
+  discountCrossLevel: number;     // 0–1
   use1mEntry: boolean;
+  enable1mEntrySell: boolean;
+  require1mChochPremium: boolean;
+  require5mChochPremium: boolean;
+  require5mChochPremiumSell: boolean;
+  enableChochRangeFilter: boolean;
+  minChochRangePips: number;
+
+  enableSpreadFilter: boolean;
+  maxSpreadPips: number;
+  assumeZeroSpread: boolean;
+  requireNoLiquiditySweep: boolean;
+  requireLiquiditySweepSell: boolean;
+
+  riskPerTradePct: number;
+  useRealBalance: boolean;
+  startingBalance: number;
 }
 ```
+
+Defaults by model:
+- aggressive: `tpLegSource=15M`, `use1mEntry=true`, `enable1mEntrySell=true`, `premiumCrossLevel=0.5`,
+  `discountCrossLevel=0.5`, `maxSpreadPips=1.0`, `riskPerTradePct=1.0`
+- passive: `tpLegSource=4H`, `use1mEntry=false`, `enable1mEntrySell=false`, `premiumCrossLevel=0.75`,
+  `discountCrossLevel=0.25`, `maxSpreadPips=2.0`, `riskPerTradePct=1.0`
 
 #### BacktestResult
 ```typescript

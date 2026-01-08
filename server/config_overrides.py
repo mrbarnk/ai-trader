@@ -26,8 +26,19 @@ MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
         "starting_balance": 10000.0,
         "risk_per_trade_pct": 1.0,
         "use_1m_entry": True,
+        "enable_1m_entry_sell": True,
+        "require_1m_choch_premium": True,
+        "require_5m_choch_premium": True,
+        "require_5m_choch_premium_sell": False,
         "premium_cross_level": 0.5,
         "discount_cross_level": 0.5,
+        "enable_spread_filter": False,
+        "max_spread_pips": 1.0,
+        "assume_zero_spread": False,
+        "enable_choch_range_filter": False,
+        "min_choch_range_pips": 6.0,
+        "require_no_liquidity_sweep": False,
+        "require_liquidity_sweep_sell": False,
     },
     "passive": {
         "model_mode": "passive",
@@ -43,8 +54,19 @@ MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
         "starting_balance": 10000.0,
         "risk_per_trade_pct": 1.0,
         "use_1m_entry": False,
+        "enable_1m_entry_sell": False,
+        "require_1m_choch_premium": True,
+        "require_5m_choch_premium": True,
+        "require_5m_choch_premium_sell": False,
         "premium_cross_level": 0.75,
-        "discount_cross_level": 0.3,
+        "discount_cross_level": 0.25,
+        "enable_spread_filter": False,
+        "max_spread_pips": 2.0,
+        "assume_zero_spread": False,
+        "enable_choch_range_filter": False,
+        "min_choch_range_pips": 6.0,
+        "require_no_liquidity_sweep": False,
+        "require_liquidity_sweep_sell": False,
     },
 }
 
@@ -72,8 +94,24 @@ CONFIG_FLOAT_KEYS = {
     "risk_per_trade_pct",
     "premium_cross_level",
     "discount_cross_level",
+    "max_spread_pips",
+    "min_choch_range_pips",
 }
-CONFIG_BOOL_KEYS = {"tp3_enabled", "enable_break_even", "use_real_balance", "use_1m_entry"}
+CONFIG_BOOL_KEYS = {
+    "tp3_enabled",
+    "enable_break_even",
+    "use_real_balance",
+    "use_1m_entry",
+    "enable_1m_entry_sell",
+    "require_1m_choch_premium",
+    "require_5m_choch_premium",
+    "require_5m_choch_premium_sell",
+    "enable_spread_filter",
+    "assume_zero_spread",
+    "enable_choch_range_filter",
+    "require_no_liquidity_sweep",
+    "require_liquidity_sweep_sell",
+}
 CONFIG_STRING_KEYS = {
     "model_mode",
     "tp_leg_source",
@@ -140,14 +178,49 @@ def build_config_overrides(user_config: dict[str, Any]) -> dict[str, Any]:
         "TP3_LEG_SOURCE": user_config.get("tp3_leg_source", config.TP3_LEG_SOURCE),
         "TP3_LEG_PERCENT": user_config.get("tp3_leg_percent", config.TP3_LEG_PERCENT),
         "SL_EXTRA_PIPS": user_config.get("sl_extra_pips", config.SL_EXTRA_PIPS),
-        "ENABLE_BREAK_EVEN": user_config.get("enable_break_even", config.ENABLE_BREAK_EVEN),
-        "RISK_PER_TRADE_PCT": user_config.get("risk_per_trade_pct", config.RISK_PER_TRADE_PCT),
+        "ENABLE_BREAK_EVEN": user_config.get(
+            "enable_break_even", config.ENABLE_BREAK_EVEN
+        ),
+        "RISK_PER_TRADE_PCT": user_config.get(
+            "risk_per_trade_pct", config.RISK_PER_TRADE_PCT
+        ),
         "USE_1M_ENTRY": user_config.get("use_1m_entry", config.USE_1M_ENTRY),
+        "ENABLE_1M_ENTRY_SELL": user_config.get(
+            "enable_1m_entry_sell", config.ENABLE_1M_ENTRY_SELL
+        ),
+        "REQUIRE_1M_CHOCH_PREMIUM": user_config.get(
+            "require_1m_choch_premium", config.REQUIRE_1M_CHOCH_PREMIUM
+        ),
+        "REQUIRE_5M_CHOCH_PREMIUM": user_config.get(
+            "require_5m_choch_premium", config.REQUIRE_5M_CHOCH_PREMIUM
+        ),
+        "REQUIRE_5M_CHOCH_PREMIUM_SELL": user_config.get(
+            "require_5m_choch_premium_sell", config.REQUIRE_5M_CHOCH_PREMIUM_SELL
+        ),
         "PREMIUM_CROSS_LEVEL": user_config.get(
             "premium_cross_level", config.PREMIUM_CROSS_LEVEL
         ),
         "DISCOUNT_CROSS_LEVEL": user_config.get(
             "discount_cross_level", config.DISCOUNT_CROSS_LEVEL
+        ),
+        "ENABLE_SPREAD_FILTER": user_config.get(
+            "enable_spread_filter", config.ENABLE_SPREAD_FILTER
+        ),
+        "MAX_SPREAD_PIPS": user_config.get("max_spread_pips", config.MAX_SPREAD_PIPS),
+        "ASSUME_ZERO_SPREAD": user_config.get(
+            "assume_zero_spread", config.ASSUME_ZERO_SPREAD
+        ),
+        "ENABLE_CHOCH_RANGE_FILTER": user_config.get(
+            "enable_choch_range_filter", config.ENABLE_CHOCH_RANGE_FILTER
+        ),
+        "MIN_CHOCH_RANGE_PIPS": user_config.get(
+            "min_choch_range_pips", config.MIN_CHOCH_RANGE_PIPS
+        ),
+        "REQUIRE_NO_LIQUIDITY_SWEEP": user_config.get(
+            "require_no_liquidity_sweep", config.REQUIRE_NO_LIQUIDITY_SWEEP
+        ),
+        "REQUIRE_LIQUIDITY_SWEEP_SELL": user_config.get(
+            "require_liquidity_sweep_sell", config.REQUIRE_LIQUIDITY_SWEEP_SELL
         ),
         "ACCOUNT_BALANCE_OVERRIDE": user_config.get(
             "starting_balance", config.ACCOUNT_BALANCE_OVERRIDE

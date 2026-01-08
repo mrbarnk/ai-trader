@@ -267,7 +267,10 @@ def _apply_account_settings(settings: AccountSettings, payload: dict[str, Any]) 
             except (TypeError, ValueError):
                 continue
         elif key == "selected_model":
-            settings.selected_model = str(value).strip() or None
+            if value is None:
+                settings.selected_model = None
+            else:
+                settings.selected_model = str(value).strip() or None
 
 
 def _issue_tokens(session, user: User) -> dict[str, str]:
@@ -336,23 +339,18 @@ def api_signup() -> Response:
     with db_session() as session:
         if session.query(User).filter_by(email=email).first():
             return json_error("Email already registered.", 409)
-        verify_token, verify_hash = generate_token()
         user = User(
             email=email,
             password_hash=generate_password_hash(password),
-            email_verify_token_hash=verify_hash,
-            email_verify_expires_at=datetime.utcnow() + timedelta(hours=EMAIL_VERIFY_TTL_HOURS),
-            email_verify_sent_at=datetime.utcnow(),
+            email_verified=True,
+            email_verify_token_hash=None,
+            email_verify_expires_at=None,
+            email_verify_sent_at=None,
         )
         session.add(user)
         session.flush()
         tokens = _issue_tokens(session, user)
         save_user_config(session, user, {})
-        send_email(
-            email,
-            "Verify your AlgoTrade AI email",
-            f"Use this code to verify your email: {verify_token}",
-        )
         return json_response(
             {"access_token": tokens["access_token"], "refresh_token": tokens["refresh_token"], "user": serialize_user(user)},
             201,
@@ -499,18 +497,13 @@ def auth_verify_email() -> Response:
             user = require_token(session)
             if not user:
                 return json_error("Unauthorized.", 401)
-            verify_token, verify_hash = generate_token()
-            user.email_verify_token_hash = verify_hash
-            user.email_verify_expires_at = datetime.utcnow() + timedelta(
-                hours=EMAIL_VERIFY_TTL_HOURS
+            user.email_verified = True
+            user.email_verify_token_hash = None
+            user.email_verify_expires_at = None
+            user.email_verify_sent_at = None
+            return json_response(
+                {"ok": True, "message": "Email verification is disabled.", "user": serialize_user(user)}
             )
-            user.email_verify_sent_at = datetime.utcnow()
-            send_email(
-                user.email,
-                "Verify your AlgoTrade AI email",
-                f"Use this code to verify your email: {verify_token}",
-            )
-            return json_response({"ok": True, "message": "Verification email sent."})
         user.email_verified = True
         user.email_verify_token_hash = None
         user.email_verify_expires_at = None
@@ -649,6 +642,17 @@ def api_account_settings(account_id: int) -> Response:
         payload = request.get_json(silent=True) or {}
         if account.settings is None:
             account.settings = AccountSettings(account_id=account.id)
+        if "selected_model" in payload:
+            current_model = account.settings.selected_model
+            new_model_raw = payload.get("selected_model")
+            new_model = None if new_model_raw is None else str(new_model_raw).strip()
+            if new_model == "":
+                new_model = None
+            if current_model and new_model and new_model != current_model:
+                return json_error(
+                    f"Account already assigned to model '{current_model}'. Clear it first.",
+                    409,
+                )
         _apply_account_settings(account.settings, payload)
         return json_response({"account": serialize_account(account)})
 
@@ -1115,6 +1119,12 @@ def api_model_copy(model_id: str) -> Response:
             return json_error("Account not found.", 404)
         if account.settings is None:
             account.settings = AccountSettings(account_id=account.id)
+        current_model = account.settings.selected_model
+        if current_model and current_model != model_id:
+            return json_error(
+                f"Account already assigned to model '{current_model}'. Clear it first.",
+                409,
+            )
         account.settings.ai_enabled = True
         account.settings.selected_model = model_id
         return json_response({"ok": True, "account": serialize_account(account)})

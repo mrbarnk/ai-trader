@@ -803,6 +803,10 @@ POST /api/models/:modelId/copy
 }
 ```
 
+**Note:** Only one active model is allowed per account. If an account already has a different
+`selected_model`, the API returns `409` and you must first clear it via
+`PATCH /api/accounts/:accountId/settings` with `{ "selected_model": null }`.
+
 ---
 
 ### Backtests API

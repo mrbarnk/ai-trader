@@ -37,18 +37,23 @@ def send_email(to_address: str, subject: str, body: str) -> bool:
     message["To"] = to_address
     message["Subject"] = subject
     message.set_content(body)
-    if SMTP_USE_SSL:
-        server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT)
-    else:
-        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
     try:
-        server.ehlo()
-        if SMTP_USE_TLS and not SMTP_USE_SSL:
-            server.starttls()
+        if SMTP_USE_SSL:
+            server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT)
+        else:
+            server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+        try:
             server.ehlo()
-        if SMTP_USERNAME and SMTP_PASSWORD:
-            server.login(SMTP_USERNAME, SMTP_PASSWORD)
-        server.send_message(message)
-    finally:
-        server.quit()
+            if SMTP_USE_TLS and not SMTP_USE_SSL:
+                server.starttls()
+                server.ehlo()
+            if SMTP_USERNAME and SMTP_PASSWORD:
+                server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.send_message(message)
+        finally:
+            server.quit()
+    except Exception as exc:  # pragma: no cover - transport errors are environment-specific
+        if MAIL_LOG_ENABLED:
+            print(f"SMTP send failed: {exc}")
+        return False
     return True

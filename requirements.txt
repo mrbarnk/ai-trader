@@ -1,6 +1,7 @@
 MetaTrader5; platform_system == "Windows"
-flask==3.0.3
+flask==2.2.5
 gunicorn==22.0.0
+Werkzeug==2.2.3
 sqlalchemy==2.0.32
 psycopg[binary]==3.2.13
 requests==2.32.3

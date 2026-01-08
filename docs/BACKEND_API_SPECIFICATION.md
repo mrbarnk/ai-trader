@@ -34,11 +34,6 @@ AlgoTrade AI is an automated forex trading platform that generates model signals
 ### Architecture Overview
 
 ```
-
-### Implementation Notes (Current Backend)
-
-- IDs are integer primary keys (not UUIDs).
-- WebSocket transport uses Socket.IO at `/socket.io/`.
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │   React App     │────▶│   REST API       │────▶│   PostgreSQL    │
 │   (Frontend)    │     │   (Backend)      │     │   (Database)    │
@@ -56,6 +51,11 @@ AlgoTrade AI is an automated forex trading platform that generates model signals
                         │   (MT4/MT5)      │              
                         └──────────────────┘              
 ```
+
+### Implementation Notes (Current Backend)
+
+- IDs are integer primary keys (not UUIDs).
+- WebSocket transport uses Socket.IO at `/socket.io/`.
 
 ---
 
@@ -103,7 +103,7 @@ AlgoTrade AI is an automated forex trading platform that generates model signals
 
 ```typescript
 interface User {
-  id: string;                    // UUID
+  id: number;
   email: string;
   full_name: string;
   avatar_url?: string;
@@ -155,7 +155,7 @@ interface User {
 #### `users`
 ```sql
 CREATE TABLE users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id INTEGER PRIMARY KEY,
   email VARCHAR(255) UNIQUE NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   full_name VARCHAR(255),
@@ -178,8 +178,8 @@ CREATE TABLE users (
 #### `mt5_accounts`
 ```sql
 CREATE TABLE mt5_accounts (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   nickname VARCHAR(100),
   account_number VARCHAR(50) NOT NULL,
   platform VARCHAR(10) NOT NULL CHECK (platform IN ('MT4', 'MT5')),
@@ -210,8 +210,8 @@ CREATE TABLE mt5_accounts (
 #### `account_settings`
 ```sql
 CREATE TABLE account_settings (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  account_id UUID NOT NULL REFERENCES mt5_accounts(id) ON DELETE CASCADE,
+  id INTEGER PRIMARY KEY,
+  account_id INTEGER NOT NULL REFERENCES mt5_accounts(id) ON DELETE CASCADE,
   
   -- Trading Model
   ai_enabled BOOLEAN DEFAULT FALSE,
@@ -264,8 +264,8 @@ CREATE TABLE account_settings (
 #### `trades`
 ```sql
 CREATE TABLE trades (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  account_id UUID NOT NULL REFERENCES mt5_accounts(id) ON DELETE CASCADE,
+  id INTEGER PRIMARY KEY,
+  account_id INTEGER NOT NULL REFERENCES mt5_accounts(id) ON DELETE CASCADE,
   
   -- Trade Identification
   mt_ticket_id BIGINT,                         -- MetaTrader ticket number
@@ -309,7 +309,7 @@ CREATE TABLE trades (
   
   -- Metadata
   is_live BOOLEAN DEFAULT TRUE,                -- FALSE for backtests
-  backtest_id UUID REFERENCES backtests(id),
+  backtest_id VARCHAR(64) REFERENCES backtests(id),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -358,7 +358,7 @@ CREATE TABLE trading_models (
 #### `model_performance`
 ```sql
 CREATE TABLE model_performance (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id INTEGER PRIMARY KEY,
   model_id VARCHAR(20) NOT NULL REFERENCES trading_models(id),
   period_type VARCHAR(20) NOT NULL CHECK (period_type IN ('monthly', 'quarterly', 'yearly', '6month')),
   period_start DATE NOT NULL,
@@ -384,8 +384,8 @@ CREATE TABLE model_performance (
 #### `backtests`
 ```sql
 CREATE TABLE backtests (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id VARCHAR(64) PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name VARCHAR(255) NOT NULL,
   model VARCHAR(20) NOT NULL REFERENCES trading_models(id),
   
@@ -496,8 +496,8 @@ CREATE INDEX idx_notifications_read ON notifications(read);
 #### `subscriptions`
 ```sql
 CREATE TABLE subscriptions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   
   tier VARCHAR(20) NOT NULL CHECK (tier IN ('free', 'demo', 'live')),
   status VARCHAR(20) NOT NULL CHECK (status IN ('active', 'canceled', 'past_due', 'expired')),
@@ -537,7 +537,7 @@ GET /api/accounts
 {
   "accounts": [
     {
-      "id": "acc_123",
+      "id": 123,
       "nickname": "FTMO Challenge",
       "account_number": "12345678",
       "platform": "MT5",
@@ -583,7 +583,7 @@ POST /api/accounts/connect
 {
   "success": true,
   "account": {
-    "id": "acc_456",
+    "id": 456,
     "status": "connected",
     "balance": 10000.00,
     "...": "..."
@@ -1127,7 +1127,7 @@ interface Trade {
 #### MT5Account
 ```typescript
 interface MT5Account {
-  id: string;
+  id: number;
   nickname: string;
   accountNumber: string;
   platform: "MT4" | "MT5";
@@ -1350,15 +1350,15 @@ interface TradingModel {
 #### Notification
 ```typescript
 interface Notification {
-  id: string;
+  id: number;
   type: "trade_executed" | "model_update" | "account_synced" | "limit_hit" | "system";
   title: string;
   message: string;
-  time: string;                    // Relative time: "2 min ago"
-  unread: boolean;
-  metadata?: {
-    tradeId?: string;
-    accountId?: string;
+  read: boolean;
+  created_at: string;
+  data?: {
+    trade_id?: number;
+    account_id?: number;
     [key: string]: any;
   };
 }
@@ -1398,12 +1398,14 @@ const socket = io("https://api.algotrade.ai", {
 }
 ```
 
+### Planned Events (Not Implemented Yet)
+
 #### Trade Closed
 ```json
 {
   "event": "trade:closed",
   "data": {
-    "accountId": "acc_123",
+    "accountId": 123,
     "trade": {
       "id": "trade_456",
       "outcome": "TP1",
@@ -1420,7 +1422,7 @@ const socket = io("https://api.algotrade.ai", {
 {
   "event": "account:updated",
   "data": {
-    "accountId": "acc_123",
+    "accountId": 123,
     "balance": 10262.87,
     "equity": 10262.87,
     "status": "connected"

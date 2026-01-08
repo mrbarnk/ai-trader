@@ -3,12 +3,13 @@ from __future__ import annotations
 import hmac
 
 from flask import Flask, Request, request
+from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
 
 from .http_utils import json_error
 from .routes_api import api
 from .routes_web import render_error_html, web
-from .settings import APP_PASSWORD, APP_USERNAME, MAX_CSV_BYTES
+from .settings import APP_PASSWORD, APP_USERNAME, CORS_ALLOWED_ORIGINS, MAX_CSV_BYTES
 from .socketio_manager import init_socketio
 
 
@@ -32,6 +33,13 @@ def _require_auth():
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = MAX_CSV_BYTES
+    CORS(
+        app,
+        resources={
+            r"/api/*": {"origins": CORS_ALLOWED_ORIGINS},
+            r"/auth/*": {"origins": CORS_ALLOWED_ORIGINS},
+        },
+    )
 
     @app.before_request
     def enforce_basic_auth():

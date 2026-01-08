@@ -19,7 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
-from .settings import DATABASE_URL
+from .settings import AUTO_CREATE_SCHEMA, DATABASE_URL
 
 
 def _normalize_database_url() -> tuple[str, dict[str, Any]]:
@@ -288,7 +288,8 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
 
 
-init_db()
+if AUTO_CREATE_SCHEMA:
+    init_db()
 
 
 @contextmanager

@@ -43,6 +43,12 @@ SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
 SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "false").lower() == "true"
 SOCKETIO_ASYNC_MODE = os.getenv("SOCKETIO_ASYNC_MODE", "threading")
 SOCKETIO_CORS_ORIGINS = os.getenv("SOCKETIO_CORS_ORIGINS")
+_cors_raw = os.getenv("CORS_ALLOWED_ORIGINS", "*")
+if _cors_raw.strip() == "*":
+    CORS_ALLOWED_ORIGINS = "*"
+else:
+    CORS_ALLOWED_ORIGINS = [item.strip() for item in _cors_raw.split(",") if item.strip()]
+AUTO_CREATE_SCHEMA = os.getenv("AUTO_CREATE_SCHEMA", "true").lower() == "true"
 
 MAX_CSV_BYTES = 10 * 1024 * 1024
 MAX_CANDLES = 100_000

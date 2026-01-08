@@ -4,12 +4,11 @@ from flask import request
 from flask_socketio import SocketIO, join_room
 
 from .jwt_utils import decode_access_token
-from .settings import SOCKETIO_ASYNC_MODE, SOCKETIO_CORS_ORIGINS
+from .settings import CORS_ALLOWED_ORIGINS, SOCKETIO_ASYNC_MODE, SOCKETIO_CORS_ORIGINS
 
-socketio = SocketIO(
-    cors_allowed_origins=SOCKETIO_CORS_ORIGINS or "*",
-    async_mode=SOCKETIO_ASYNC_MODE,
-)
+cors_origins = SOCKETIO_CORS_ORIGINS or CORS_ALLOWED_ORIGINS or "*"
+
+socketio = SocketIO(cors_allowed_origins=cors_origins, async_mode=SOCKETIO_ASYNC_MODE)
 
 
 def init_socketio(app) -> SocketIO:

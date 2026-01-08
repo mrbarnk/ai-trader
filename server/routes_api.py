@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import secrets
 import tempfile
@@ -53,11 +54,23 @@ from .settings import (
     EMAIL_VERIFY_TTL_HOURS,
     METAAPI_SYNC_LOOKBACK_DAYS,
     METAAPI_TOKEN,
+    PASSWORD_HASH_METHOD,
     PASSWORD_MIN_LENGTH,
     PASSWORD_RESET_TTL_HOURS,
 )
 
 api = Blueprint("api", __name__)
+
+
+def _hash_password(password: str) -> str:
+    return generate_password_hash(password, method=PASSWORD_HASH_METHOD)
+
+
+def _check_password(stored_hash: str, password: str) -> bool | None:
+    try:
+        return check_password_hash(stored_hash, password)
+    except (ValueError, TypeError, hashlib.UnsupportedDigestmodError):
+        return None
 
 
 ACCOUNT_SETTINGS_BOOL_FIELDS = {
@@ -363,7 +376,7 @@ def api_signup() -> Response:
             return json_error("Email already registered.", 409)
         user = User(
             email=email,
-            password_hash=generate_password_hash(password),
+            password_hash=_hash_password(password),
             email_verified=True,
             email_verify_token_hash=None,
             email_verify_expires_at=None,
@@ -388,7 +401,12 @@ def api_login() -> Response:
         return json_error("Email and password are required.", 400)
     with db_session() as session:
         user = session.query(User).filter_by(email=email).first()
-        if not user or not check_password_hash(user.password_hash, password):
+        if not user:
+            return json_error("Invalid credentials.", 401)
+        verified = _check_password(user.password_hash, password)
+        if verified is None:
+            return json_error("Password reset required.", 403)
+        if not verified:
             return json_error("Invalid credentials.", 401)
         tokens = _issue_tokens(session, user)
         return json_response(
@@ -494,7 +512,7 @@ def auth_reset_password() -> Response:
             return json_error("Invalid or expired reset token.", 400)
         if user.reset_token_expires_at and user.reset_token_expires_at < datetime.utcnow():
             return json_error("Reset token has expired.", 400)
-        user.password_hash = generate_password_hash(password)
+        user.password_hash = _hash_password(password)
         user.reset_token_hash = None
         user.reset_token_expires_at = None
         user.reset_token_sent_at = None

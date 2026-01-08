@@ -1188,10 +1188,12 @@ def api_backtests() -> Response:
             csv_path.unlink(missing_ok=True)
             return json_error(error, 400)
 
-        user_config = load_user_config(session, user)
+        user_config = load_user_config(session, user, model_mode=model)
         if isinstance(settings, dict):
             sanitized = sanitize_config(settings)
             user_config.update(sanitized)
+        if model:
+            user_config["model_mode"] = model
         overrides = build_config_overrides(user_config)
         if starting_balance is not None:
             try:

@@ -62,6 +62,50 @@ AlgoTrade AI is an automated forex trading platform that generates model signals
 
 ---
 
+## Strategy Configuration (Per-Model Profiles)
+
+The backend exposes a **user strategy config** via `GET /api/config` and accepts
+the same keys in `POST /api/backtests` under the `settings` field. Only the keys
+listed below are accepted (unknown keys are ignored).
+
+### Model Profiles (Defaults)
+
+Aggressive and passive share the same config keys, but **defaults differ per model**.
+
+- **Aggressive**: 4H bias → 15M structure → **5M entry** (1M optional), TP leg source defaults to **15M**.
+- **Passive**: 4H bias → 15M location (premium/discount cross) → 5M entry (1M optional),
+  TP leg source defaults to **4H**.
+
+**Premium/Discount defaults** (used by passive cross checks): **Premium = 0.75**, **Discount = 0.30**.
+
+### Config Keys (snake_case)
+
+| Key | Type | Description | Aggressive Default | Passive Default |
+|---|---|---|---|---|
+| `model_mode` | string | `aggressive` or `passive` | `aggressive` | `passive` |
+| `tp_leg_source` | string | TP1/TP2 leg: `4H` or `15M` | `15M` | `4H` |
+| `tp1_leg_percent` | number | TP1 % of leg (0–1) | `0.5` | `0.5` |
+| `tp2_leg_percent` | number | TP2 % of leg (0–1) | `0.9` | `0.9` |
+| `tp3_enabled` | boolean | Enable TP3 (optional) | `false` | `false` |
+| `tp3_leg_source` | string | TP3 leg: `4H`, `15M`, or `D1` | `4H` | `4H` |
+| `tp3_leg_percent` | number | TP3 % of leg (0–1) | `1.0` | `1.0` |
+| `premium_cross_level` | number | Premium level (0–1) | `0.75` | `0.75` |
+| `discount_cross_level` | number | Discount level (0–1) | `0.30` | `0.30` |
+| `sl_extra_pips` | number | SL buffer in pips | `3.0` | `3.0` |
+| `enable_break_even` | boolean | Move SL to BE after TP1 | `true` | `true` |
+| `risk_per_trade_pct` | number | % risk per trade | `1.0` | `1.0` |
+| `starting_balance` | number | Starting balance for backtests | `10000` | `10000` |
+| `use_1m_entry` | boolean | Use 1M entry confirmation | `false` | `false` |
+| `metaapi_account_id` | string | MetaApi account ID (optional) | `""` | `""` |
+| `metaapi_token` | string | MetaApi token override (optional) | `""` | `""` |
+
+**TP leg notes**
+- `tp*_leg_percent` values are **decimals** (0.5 = 50%).
+- `tp_leg_source` controls TP1/TP2. TP3 uses `tp3_leg_source`.
+- If a requested leg is missing, the engine falls back to 4H when possible.
+
+---
+
 ## Authentication
 
 ### Requirements
@@ -535,6 +579,49 @@ CREATE TABLE subscriptions (
 
 ## API Endpoints
 
+### User Strategy Config API
+
+#### Get User Strategy Config
+```
+GET /api/config
+```
+
+**Response:**
+```json
+{
+  "config": {
+    "model_mode": "aggressive",
+    "tp_leg_source": "15M",
+    "tp1_leg_percent": 0.5,
+    "tp2_leg_percent": 0.9,
+    "tp3_enabled": false,
+    "tp3_leg_source": "4H",
+    "tp3_leg_percent": 1.0,
+    "premium_cross_level": 0.75,
+    "discount_cross_level": 0.3,
+    "sl_extra_pips": 3.0,
+    "enable_break_even": true,
+    "risk_per_trade_pct": 1.0,
+    "starting_balance": 10000,
+    "use_1m_entry": false
+  }
+}
+```
+
+#### Update User Strategy Config
+```
+PUT /api/config
+```
+
+**Request (partial updates allowed):**
+```json
+{
+  "tp3_enabled": true,
+  "tp3_leg_source": "D1",
+  "tp3_leg_percent": 1.0
+}
+```
+
 ### Accounts API
 
 #### List Connected Accounts
@@ -861,6 +948,11 @@ POST /api/backtests
 
 CSV data can be provided as multipart upload (`csv`) or as a base64 string (`csv_base64`) until broker data providers are wired in.
 
+`settings` must use the **strategy config keys** listed in the Strategy Configuration section
+(snake_case). Example keys: `tp_leg_source`, `tp1_leg_percent`, `tp2_leg_percent`, `tp3_enabled`,
+`tp3_leg_source`, `tp3_leg_percent`, `premium_cross_level`, `discount_cross_level`, `use_1m_entry`,
+`risk_per_trade_pct`, `sl_extra_pips`.
+
 **Response:**
 ```json
 {
@@ -968,11 +1060,14 @@ GET /api/backtests/:backtestId
     { "date": "2024-01-01", "balance": 10000, "drawdown": 0, "trade_count": 0 },
     { "date": "2024-01-02", "balance": 10125, "drawdown": 0, "trade_count": 5 }
   ],
-  "trades": [
-    { "...": "full trade objects" }
+  "rows": [
+    { "...": "full backtest rows" }
   ]
 }
 ```
+
+`rows` are returned only from the **detail** endpoint (`GET /api/backtests/:backtestId`).
+The list endpoint (`GET /api/backtests`) omits rows for size.
 
 #### Delete Backtest
 ```
@@ -1215,6 +1310,26 @@ interface AccountSettings {
 }
 ```
 
+#### UserStrategyConfig
+```typescript
+interface UserStrategyConfig {
+  modelMode: "aggressive" | "passive";
+  tpLegSource: "4H" | "15M";
+  tp1LegPercent: number;          // 0–1
+  tp2LegPercent: number;          // 0–1
+  tp3Enabled: boolean;
+  tp3LegSource: "4H" | "15M" | "D1";
+  tp3LegPercent: number;          // 0–1
+  premiumCrossLevel: number;      // 0–1
+  discountCrossLevel: number;     // 0–1
+  slExtraPips: number;
+  enableBreakEven: boolean;
+  riskPerTradePct: number;
+  startingBalance: number;
+  use1mEntry: boolean;
+}
+```
+
 #### BacktestResult
 ```typescript
 interface BacktestResult {
@@ -1307,7 +1422,7 @@ interface BacktestResult {
     tradeCount: number;
   }>;
   
-  trades: Trade[];
+  rows: Array<Record<string, any>>; // Raw backtest rows (signal + outcome fields)
 }
 
 interface SessionStats {

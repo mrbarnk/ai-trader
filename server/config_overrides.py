@@ -9,23 +9,59 @@ from trader import config
 
 from .models import User, UserConfig
 
-DEFAULT_USER_CONFIG: dict[str, Any] = {
-    "model_mode": "aggressive",
-    "tp_leg_source": "4H",
-    "tp1_leg_percent": 0.5,
-    "tp2_leg_percent": 0.9,
-    "tp3_enabled": False,
-    "tp3_leg_source": "4H",
-    "tp3_leg_percent": 1.0,
-    "sl_extra_pips": 3.0,
-    "enable_break_even": True,
-    "use_real_balance": False,
-    "starting_balance": 10000.0,
-    "risk_per_trade_pct": 1.0,
-    "use_1m_entry": False,
+DEFAULT_MODEL_MODE = "aggressive"
+
+MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
+    "aggressive": {
+        "model_mode": "aggressive",
+        "tp_leg_source": "4H",
+        "tp1_leg_percent": 0.5,
+        "tp2_leg_percent": 0.9,
+        "tp3_enabled": False,
+        "tp3_leg_source": "4H",
+        "tp3_leg_percent": 1.0,
+        "sl_extra_pips": 3.0,
+        "enable_break_even": True,
+        "use_real_balance": False,
+        "starting_balance": 10000.0,
+        "risk_per_trade_pct": 1.0,
+        "use_1m_entry": True,
+        "premium_cross_level": 0.5,
+        "discount_cross_level": 0.5,
+    },
+    "passive": {
+        "model_mode": "passive",
+        "tp_leg_source": "4H",
+        "tp1_leg_percent": 0.5,
+        "tp2_leg_percent": 0.9,
+        "tp3_enabled": False,
+        "tp3_leg_source": "4H",
+        "tp3_leg_percent": 1.0,
+        "sl_extra_pips": 3.0,
+        "enable_break_even": True,
+        "use_real_balance": False,
+        "starting_balance": 10000.0,
+        "risk_per_trade_pct": 1.0,
+        "use_1m_entry": False,
+        "premium_cross_level": 0.75,
+        "discount_cross_level": 0.3,
+    },
+}
+
+BASE_DEFAULTS: dict[str, Any] = {
     "metaapi_account_id": "",
     "metaapi_token": "",
 }
+
+
+def _model_defaults(model_mode: str | None) -> dict[str, Any]:
+    selected = (model_mode or DEFAULT_MODEL_MODE).lower()
+    defaults = MODEL_DEFAULTS.get(selected, MODEL_DEFAULTS[DEFAULT_MODEL_MODE]).copy()
+    defaults.update(BASE_DEFAULTS)
+    return defaults
+
+
+DEFAULT_USER_CONFIG: dict[str, Any] = _model_defaults(DEFAULT_MODEL_MODE)
 
 CONFIG_FLOAT_KEYS = {
     "tp1_leg_percent",
@@ -34,6 +70,8 @@ CONFIG_FLOAT_KEYS = {
     "sl_extra_pips",
     "starting_balance",
     "risk_per_trade_pct",
+    "premium_cross_level",
+    "discount_cross_level",
 }
 CONFIG_BOOL_KEYS = {"tp3_enabled", "enable_break_even", "use_real_balance", "use_1m_entry"}
 CONFIG_STRING_KEYS = {
@@ -64,21 +102,24 @@ def sanitize_config(data: dict[str, Any]) -> dict[str, Any]:
     return sanitized
 
 
-def load_user_config(session, user: User) -> dict[str, Any]:
+def load_user_config(
+    session, user: User, model_mode: str | None = None
+) -> dict[str, Any]:
     existing = session.query(UserConfig).filter_by(user_id=user.id).first()
     if not existing:
-        return DEFAULT_USER_CONFIG.copy()
+        return _model_defaults(model_mode)
     try:
         stored = json.loads(existing.config_json)
     except json.JSONDecodeError:
         stored = {}
-    merged = DEFAULT_USER_CONFIG.copy()
+    stored_mode = stored.get("model_mode")
+    merged = _model_defaults(model_mode or stored_mode)
     merged.update({k: v for k, v in stored.items() if k in ALLOWED_CONFIG_KEYS})
     return merged
 
 
 def save_user_config(session, user: User, config_data: dict[str, Any]) -> dict[str, Any]:
-    merged = load_user_config(session, user)
+    merged = load_user_config(session, user, config_data.get("model_mode"))
     merged.update(config_data)
     existing = session.query(UserConfig).filter_by(user_id=user.id).first()
     payload = json.dumps(merged)
@@ -102,6 +143,12 @@ def build_config_overrides(user_config: dict[str, Any]) -> dict[str, Any]:
         "ENABLE_BREAK_EVEN": user_config.get("enable_break_even", config.ENABLE_BREAK_EVEN),
         "RISK_PER_TRADE_PCT": user_config.get("risk_per_trade_pct", config.RISK_PER_TRADE_PCT),
         "USE_1M_ENTRY": user_config.get("use_1m_entry", config.USE_1M_ENTRY),
+        "PREMIUM_CROSS_LEVEL": user_config.get(
+            "premium_cross_level", config.PREMIUM_CROSS_LEVEL
+        ),
+        "DISCOUNT_CROSS_LEVEL": user_config.get(
+            "discount_cross_level", config.DISCOUNT_CROSS_LEVEL
+        ),
         "ACCOUNT_BALANCE_OVERRIDE": user_config.get(
             "starting_balance", config.ACCOUNT_BALANCE_OVERRIDE
         ),

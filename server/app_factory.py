@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 
 from flask import Flask, Request, request
 from flask_cors import CORS
@@ -33,7 +34,9 @@ def _require_auth():
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = MAX_CSV_BYTES
-    supports_credentials = CORS_ALLOWED_ORIGINS != "*"
+    if not app.logger.handlers:
+        logging.basicConfig(level=logging.INFO)
+    # supports_credentials = CORS_ALLOWED_ORIGINS != "*"
     CORS(
         app,
         resources={
@@ -41,9 +44,9 @@ def create_app() -> Flask:
             r"/auth/*": {"origins": CORS_ALLOWED_ORIGINS},
             r"/socket.io/*": {"origins": CORS_ALLOWED_ORIGINS},
         },
-        supports_credentials=supports_credentials,
-        allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
-        methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+        # supports_credentials=supports_credentials,
+        # allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
+        # methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     )
 
     @app.before_request
@@ -61,6 +64,7 @@ def create_app() -> Flask:
 
     @app.errorhandler(Exception)
     def handle_error(error: Exception):
+        app.logger.exception("Unhandled error on %s %s", request.method, request.path)
         if isinstance(error, HTTPException):
             if request.path.startswith("/api/") or request.path.startswith("/auth/"):
                 return json_error("Something went wrong. Please try again.", error.code or 500)

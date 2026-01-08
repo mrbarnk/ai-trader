@@ -57,7 +57,7 @@ AlgoTrade AI is an automated forex trading platform that generates model signals
 
 - IDs are integer primary keys (not UUIDs).
 - WebSocket transport uses Socket.IO at `/socket.io/`.
-- Email verification is disabled (signup marks `email_verified=true`).
+- Email verification is enabled (signup sets `email_verified=false` and sends a verification code when SMTP is configured).
 - Each MT5 account can select only **one** active model at a time.
 - CORS uses `CORS_ALLOWED_ORIGINS` and applies to `/api/*`, `/auth/*`, and `/socket.io/*`.
 
@@ -67,7 +67,7 @@ AlgoTrade AI is an automated forex trading platform that generates model signals
 
 The backend exposes a **user strategy config** via `GET /api/config` and accepts
 the same keys in `POST /api/backtests` under the `settings` field. Only the keys
-listed below are accepted (unknown keys are ignored).
+listed below are accepted (unknown keys are rejected with 400).
 
 ### Model Profiles (Defaults)
 
@@ -77,7 +77,7 @@ Aggressive and passive share the same config keys, but **defaults differ per mod
 - **Passive**: 4H bias → 15M location (premium/discount cross) → 5M entry (1M optional),
   TP leg source defaults to **4H**.
 
-**Premium/Discount defaults** (used by passive cross checks): **Premium = 0.75**, **Discount = 0.30**.
+**Premium/Discount defaults**: Aggressive uses **0.50 / 0.50**, Passive uses **0.75 / 0.30**.
 
 ### Config Keys (snake_case)
 
@@ -90,13 +90,13 @@ Aggressive and passive share the same config keys, but **defaults differ per mod
 | `tp3_enabled` | boolean | Enable TP3 (optional) | `false` | `false` |
 | `tp3_leg_source` | string | TP3 leg: `4H`, `15M`, or `D1` | `4H` | `4H` |
 | `tp3_leg_percent` | number | TP3 % of leg (0–1) | `1.0` | `1.0` |
-| `premium_cross_level` | number | Premium level (0–1) | `0.75` | `0.75` |
-| `discount_cross_level` | number | Discount level (0–1) | `0.30` | `0.30` |
+| `premium_cross_level` | number | Premium level (0–1) | `0.50` | `0.75` |
+| `discount_cross_level` | number | Discount level (0–1) | `0.50` | `0.30` |
 | `sl_extra_pips` | number | SL buffer in pips | `3.0` | `3.0` |
 | `enable_break_even` | boolean | Move SL to BE after TP1 | `true` | `true` |
 | `risk_per_trade_pct` | number | % risk per trade | `1.0` | `1.0` |
 | `starting_balance` | number | Starting balance for backtests | `10000` | `10000` |
-| `use_1m_entry` | boolean | Use 1M entry confirmation | `false` | `false` |
+| `use_1m_entry` | boolean | Use 1M entry confirmation | `true` | `false` |
 | `metaapi_account_id` | string | MetaApi account ID (optional) | `""` | `""` |
 | `metaapi_token` | string | MetaApi token override (optional) | `""` | `""` |
 
@@ -113,6 +113,7 @@ Aggressive and passive share the same config keys, but **defaults differ per mod
 
 - JWT-based authentication (access token)
 - Refresh token rotation (refresh token stored server-side)
+- Access token TTL default: **7 days** (configurable via `JWT_ACCESS_TTL_MINUTES`)
 - Email verification flow
 - Password reset flow
 - Optional 2FA support
@@ -653,7 +654,7 @@ GET /api/config
 {
   "config": {
     "model_mode": "aggressive",
-    "tp_leg_source": "4H",
+    "tp_leg_source": "15M",
     "tp1_leg_percent": 0.5,
     "tp2_leg_percent": 0.9,
     "tp3_enabled": false,
@@ -683,6 +684,9 @@ PUT /api/config
   "tp3_leg_percent": 1.0
 }
 ```
+
+**Validation**
+- Unknown keys are rejected with 400.
 
 ### Accounts API
 
@@ -1019,6 +1023,9 @@ POST /api/backtests
 }
 ```
 
+`date_start`/`date_end` are optional. If omitted, the backend derives the range from the
+first and last candle in the CSV. Format: `YYYY-MM-DD` (UTC).
+
 CSV data can be provided as multipart upload (`csv`) or as a base64 string (`csv_base64`) until broker data providers are wired in.
 `settings` accepts the same keys as the Strategy Configuration section.
 If you submit multipart form data, send `settings` as a JSON-encoded string (the API parses it).
@@ -1027,6 +1034,7 @@ If you submit multipart form data, send `settings` as a JSON-encoded string (the
 (snake_case). Example keys: `tp_leg_source`, `tp1_leg_percent`, `tp2_leg_percent`, `tp3_enabled`,
 `tp3_leg_source`, `tp3_leg_percent`, `premium_cross_level`, `discount_cross_level`, `use_1m_entry`,
 `risk_per_trade_pct`, `sl_extra_pips`.
+Unknown keys return **400**.
 
 **Response:**
 ```json
@@ -1129,6 +1137,17 @@ GET /api/backtests/:backtestId
       "win_rate": 65.7,
       "total_pnl": 3180,
       "avg_pnl": 18.17
+    }
+  },
+  "diagnostics": {
+    "total_signals": 2145,
+    "no_trade_signals": 2142,
+    "top_failed_rules": [
+      { "rule": "STEP_2_4H_BIAS_NO_TRADE", "count": 1201 }
+    ],
+    "last_no_trade": {
+      "timestamp_utc": "2024-02-15T09:20:00Z",
+      "rules_failed": ["STEP_6_5M_CHOCH_MISSING"]
     }
   },
   "equity_data": [
@@ -1488,6 +1507,13 @@ interface BacktestResult {
   sessionPerformance: {
     london: SessionStats;
     ny: SessionStats;
+  };
+  
+  diagnostics?: {
+    totalSignals: number;
+    noTradeSignals: number;
+    topFailedRules: Array<{ rule: string; count: number }>;
+    lastNoTrade?: { timestampUtc: string; rulesFailed: string[] };
   };
   
   equityData: Array<{

@@ -151,6 +151,7 @@ def serialize_backtest(backtest: Backtest, include_rows: bool = True) -> dict[st
         "losing_trades": backtest.losing_trades,
         "break_even_trades": backtest.break_even_trades,
         "win_rate": float(backtest.win_rate) if backtest.win_rate is not None else None,
+        "diagnostics": None,
         "rows": None,
         "created_at": backtest.created_at.isoformat() + "Z" if backtest.created_at else None,
         "updated_at": backtest.updated_at.isoformat() + "Z" if backtest.updated_at else None,
@@ -160,4 +161,9 @@ def serialize_backtest(backtest: Backtest, include_rows: bool = True) -> dict[st
             payload["rows"] = json.loads(backtest.rows_json)
         except json.JSONDecodeError:
             payload["rows"] = None
+    if backtest.diagnostics_json:
+        try:
+            payload["diagnostics"] = json.loads(backtest.diagnostics_json)
+        except json.JSONDecodeError:
+            payload["diagnostics"] = None
     return payload

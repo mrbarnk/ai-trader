@@ -41,7 +41,7 @@ MAIL_LOG_ENABLED = os.getenv("MAIL_LOG_ENABLED", "true").lower() == "true"
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret")
 JWT_ISSUER = os.getenv("JWT_ISSUER", "algotrade-ai")
 JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "algotrade-ai-users")
-JWT_ACCESS_TTL_MINUTES = int(os.getenv("JWT_ACCESS_TTL_MINUTES", "30"))
+JWT_ACCESS_TTL_MINUTES = int(os.getenv("JWT_ACCESS_TTL_MINUTES", "10080"))
 JWT_REFRESH_TTL_DAYS = int(os.getenv("JWT_REFRESH_TTL_DAYS", "14"))
 SMTP_HOST = os.getenv("SMTP_HOST", "imap.hostinger.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))

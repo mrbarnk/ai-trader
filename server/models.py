@@ -278,6 +278,7 @@ class Backtest(Base):
     session_performance = Column(Text)
     equity_data = Column(Text)
     rows_json = Column(Text)
+    diagnostics_json = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     completed_at = Column(DateTime(timezone=True))

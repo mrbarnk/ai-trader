@@ -14,7 +14,7 @@ DEFAULT_MODEL_MODE = "aggressive"
 MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
     "aggressive": {
         "model_mode": "aggressive",
-        "tp_leg_source": "4H",
+        "tp_leg_source": "15M",
         "tp1_leg_percent": 0.5,
         "tp2_leg_percent": 0.9,
         "tp3_enabled": False,

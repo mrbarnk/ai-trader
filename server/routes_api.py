@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import _hashlib
 import json
 import secrets
 import tempfile
@@ -22,6 +23,7 @@ from .backtest_jobs import (
 )
 from .auth_tokens import generate_token, hash_token
 from .config_overrides import (
+    ALLOWED_CONFIG_KEYS,
     build_config_overrides,
     load_user_config,
     save_user_config,
@@ -66,11 +68,45 @@ def _hash_password(password: str) -> str:
     return generate_password_hash(password, method=PASSWORD_HASH_METHOD)
 
 
+_UNSUPPORTED_DIGEST = getattr(_hashlib, "UnsupportedDigestmodError", ValueError)
+
+
 def _check_password(stored_hash: str, password: str) -> bool | None:
     try:
         return check_password_hash(stored_hash, password)
-    except (ValueError, TypeError, hashlib.UnsupportedDigestmodError):
+    except (ValueError, TypeError, _UNSUPPORTED_DIGEST):
         return None
+
+
+def _issue_email_verification(user: User) -> str:
+    token, token_hash = generate_token()
+    user.email_verify_token_hash = token_hash
+    user.email_verify_expires_at = datetime.utcnow() + timedelta(
+        hours=EMAIL_VERIFY_TTL_HOURS
+    )
+    user.email_verify_sent_at = datetime.utcnow()
+    return token
+
+
+def _send_verification_email(email: str, token: str) -> None:
+    send_email(
+        email,
+        "Verify your AlgoTrade AI email",
+        f"Use this verification code to confirm your email: {token}",
+    )
+
+
+def _validate_strategy_settings(
+    data: dict[str, Any], label: str
+) -> tuple[dict[str, Any], str | None]:
+    invalid_keys = sorted(set(data) - ALLOWED_CONFIG_KEYS)
+    if invalid_keys:
+        joined = ", ".join(invalid_keys)
+        return {}, f"{label} contains unsupported keys: {joined}."
+    sanitized = sanitize_config(data)
+    if not sanitized:
+        return {}, f"{label} must include valid strategy config keys."
+    return sanitized, None
 
 
 ACCOUNT_SETTINGS_BOOL_FIELDS = {
@@ -377,13 +413,12 @@ def api_signup() -> Response:
         user = User(
             email=email,
             password_hash=_hash_password(password),
-            email_verified=True,
-            email_verify_token_hash=None,
-            email_verify_expires_at=None,
-            email_verify_sent_at=None,
+            email_verified=False,
         )
         session.add(user)
+        verify_token = _issue_email_verification(user)
         session.flush()
+        _send_verification_email(email, verify_token)
         tokens = _issue_tokens(session, user)
         save_user_config(session, user, {})
         return json_response(
@@ -537,12 +572,14 @@ def auth_verify_email() -> Response:
             user = require_token(session)
             if not user:
                 return json_error("Unauthorized.", 401)
-            user.email_verified = True
-            user.email_verify_token_hash = None
-            user.email_verify_expires_at = None
-            user.email_verify_sent_at = None
+            if user.email_verified:
+                return json_response(
+                    {"ok": True, "message": "Email already verified.", "user": serialize_user(user)}
+                )
+            verify_token = _issue_email_verification(user)
+            _send_verification_email(user.email, verify_token)
             return json_response(
-                {"ok": True, "message": "Email verification is disabled.", "user": serialize_user(user)}
+                {"ok": True, "message": "Verification email sent.", "user": serialize_user(user)}
             )
         user.email_verified = True
         user.email_verify_token_hash = None
@@ -578,9 +615,9 @@ def api_config() -> Response:
         if request.method == "GET":
             return json_response({"config": load_user_config(session, user)})
         payload = request.get_json(silent=True) or {}
-        sanitized = sanitize_config(payload)
-        if not sanitized:
-            return json_error("No valid config fields provided.", 400)
+        sanitized, error = _validate_strategy_settings(payload, "config")
+        if error:
+            return json_error(error, 400)
         updated = save_user_config(session, user, sanitized)
         return json_response({"config": updated})
 
@@ -1255,11 +1292,9 @@ def api_backtests() -> Response:
 
         user_config = load_user_config(session, user, model_mode=model)
         if settings:
-            sanitized = sanitize_config(settings)
-            if not sanitized:
-                return json_error(
-                    "settings must include valid strategy config keys.", 400
-                )
+            sanitized, error = _validate_strategy_settings(settings, "settings")
+            if error:
+                return json_error(error, 400)
             user_config.update(sanitized)
         if model:
             user_config["model_mode"] = model
@@ -1342,11 +1377,9 @@ def api_backtest() -> Response:
 
         user_config = load_user_config(session, user, model_mode=model)
         if settings:
-            sanitized = sanitize_config(settings)
-            if not sanitized:
-                return json_error(
-                    "settings must include valid strategy config keys.", 400
-                )
+            sanitized, error = _validate_strategy_settings(settings, "settings")
+            if error:
+                return json_error(error, 400)
             user_config.update(sanitized)
         if model:
             user_config["model_mode"] = model

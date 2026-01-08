@@ -4,7 +4,7 @@ import json
 import secrets
 import shutil
 import tempfile
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, time
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +47,14 @@ def validate_candles(csv_path: Path) -> str | None:
     if span > timedelta(days=MAX_RANGE_DAYS):
         return f"CSV spans {span.days} days; max allowed is {MAX_RANGE_DAYS}."
     return None
+
+
+def _date_bounds(value: date | None, is_end: bool) -> datetime | None:
+    if not value:
+        return None
+    if is_end:
+        return datetime.combine(value, time.max).replace(microsecond=0)
+    return datetime.combine(value, time.min)
 
 
 def summarize_backtest_rows(rows: list[dict[str, Any]], starting_balance: float | None) -> dict[str, Any]:
@@ -174,25 +182,46 @@ def run_backtest_job(job_id: str, csv_path: Path, overrides: dict[str, Any]) -> 
         update_backtest_job(job_id, progress=percent)
 
     original_log_setting = config.LOG_DAILY_LIMITS
+    start_dt: datetime | None = None
+    end_dt: datetime | None = None
+    with db_session() as session:
+        job = session.query(Backtest).filter_by(id=job_id).first()
+        if job:
+            start_dt = _date_bounds(job.date_start, is_end=False)
+            end_dt = _date_bounds(job.date_end, is_end=True)
     config.LOG_DAILY_LIMITS = False
     try:
+        if start_dt is None and end_dt is None:
+            candles = load_csv_candles(csv_path)
+            if candles:
+                start_dt = candles[0].time_utc
+                end_dt = candles[-1].time_utc
+                update_backtest_job(
+                    job_id,
+                    date_start=start_dt.date(),
+                    date_end=end_dt.date(),
+                )
+        if start_dt and end_dt and end_dt < start_dt:
+            raise ValueError("date_end is before date_start")
         with apply_config_overrides(overrides):
             run_backtest(
                 csv_path,
                 source_minutes=1,
                 output_path=output_path,
-                start=None,
-                end=None,
+                start=start_dt,
+                end=end_dt,
                 model_mode=overrides.get("MODEL_MODE"),
                 progress_callback=progress_callback,
             )
         rows = _load_rows(outcome_path)
+        diagnostics = _summarize_signal_diagnostics(output_path)
         summary = summarize_backtest_rows(rows, overrides.get("ACCOUNT_BALANCE_OVERRIDE"))
         update_backtest_job(
             job_id,
             status="completed",
             progress=100,
             rows_json=json.dumps(rows),
+            diagnostics_json=json.dumps(diagnostics) if diagnostics else None,
             model=overrides.get("MODEL_MODE"),
             completed_at=datetime.utcnow(),
             ending_balance=summary.get("ending_balance"),
@@ -248,3 +277,47 @@ def _load_rows(jsonl_path: Path) -> list[dict[str, Any]]:
             if line.strip():
                 rows.append(json.loads(line))
     return rows
+
+
+def _summarize_signal_diagnostics(jsonl_path: Path) -> dict[str, Any] | None:
+    if not jsonl_path.exists():
+        return None
+    total_signals = 0
+    no_trade_signals = 0
+    failed_rule_counts: dict[str, int] = {}
+    last_no_trade: dict[str, Any] | None = None
+    with jsonl_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            total_signals += 1
+            record = json.loads(line)
+            if record.get("decision") != "NO_TRADE":
+                continue
+            no_trade_signals += 1
+            rules_failed = record.get("rules_failed") or []
+            if not rules_failed:
+                failed_rule_counts["NO_RULES_FAILED"] = (
+                    failed_rule_counts.get("NO_RULES_FAILED", 0) + 1
+                )
+            for rule in rules_failed:
+                failed_rule_counts[rule] = failed_rule_counts.get(rule, 0) + 1
+            last_no_trade = {
+                "timestamp_utc": record.get("timestamp_utc"),
+                "rules_failed": rules_failed,
+            }
+    if total_signals == 0:
+        return None
+    top_failed = sorted(
+        failed_rule_counts.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    return {
+        "total_signals": total_signals,
+        "no_trade_signals": no_trade_signals,
+        "top_failed_rules": [
+            {"rule": rule, "count": count} for rule, count in top_failed[:5]
+        ],
+        "last_no_trade": last_no_trade,
+    }

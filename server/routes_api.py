@@ -48,6 +48,7 @@ from .serializers import (
     serialize_trade,
     serialize_user,
 )
+from .trade_management import manage_break_even_for_account
 from .settings import (
     EMAIL_VERIFY_TTL_HOURS,
     METAAPI_SYNC_LOOKBACK_DAYS,
@@ -104,6 +105,25 @@ def _resolve_metaapi_token(user_config: dict[str, Any]) -> str | None:
     return None
 
 
+def _parse_settings_payload(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
+    if raw is None:
+        return None, None
+    if isinstance(raw, dict):
+        return raw, None
+    if isinstance(raw, str):
+        value = raw.strip()
+        if not value:
+            return None, None
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return None, "settings must be a JSON object."
+        if not isinstance(parsed, dict):
+            return None, "settings must be a JSON object."
+        return parsed, None
+    return None, "settings must be a JSON object."
+
+
 def _coerce_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
@@ -143,6 +163,8 @@ def _order_action(direction: str, order_type: str) -> str | None:
     if order_type == "STOP":
         return "ORDER_TYPE_BUY_STOP" if direction == "BUY" else "ORDER_TYPE_SELL_STOP"
     return None
+
+
 
 
 def _trade_exists(session, account_id: int, ticket_id: int | None, signature: dict[str, Any]) -> bool:
@@ -715,6 +737,9 @@ def api_account_sync(account_id: int) -> Response:
         sync_trades = bool(
             payload.get("sync_trades") or request.args.get("sync_trades") == "1"
         )
+        manage_trades = bool(
+            payload.get("manage_trades") or request.args.get("manage_trades") == "1"
+        )
         trade_summary = None
         if sync_trades:
             start_time = payload.get("start_time") or None
@@ -733,10 +758,15 @@ def api_account_sync(account_id: int) -> Response:
                 return json_response(
                     {"account": serialize_account(account), "error": str(exc)}, 400
                 )
+        trade_actions = None
+        if manage_trades:
+            trade_actions = manage_break_even_for_account(session, account, client)
         account.last_sync_at = now
         payload = {"account": serialize_account(account)}
         if trade_summary is not None:
             payload["trades"] = trade_summary
+        if trade_actions is not None:
+            payload["trade_actions"] = trade_actions
         return json_response(payload)
 
 
@@ -767,7 +797,10 @@ def api_account_place_order(account_id: int) -> Response:
         volume = _extract_float(data, ("volume", "lots", "size"))
         entry_price = _extract_float(data, ("entry_price", "price"))
         stop_loss = _extract_float(data, ("stop_loss", "sl"))
-        take_profit = _extract_float(data, ("take_profit", "tp"))
+        tp1_price = _extract_float(data, ("tp1_price", "tp1", "take_profit", "tp"))
+        tp2_price = _extract_float(data, ("tp2_price", "tp2"))
+        tp3_price = _extract_float(data, ("tp3_price", "tp3"))
+        tp1_percent = _extract_float(data, ("tp1_percent",))
         if not symbol or not direction or volume is None:
             return json_error("symbol, direction, and volume are required.", 400)
         action_type = _order_action(direction, order_type)
@@ -800,8 +833,9 @@ def api_account_place_order(account_id: int) -> Response:
             payload["price"] = entry_price
         if stop_loss is not None:
             payload["stopLoss"] = stop_loss
-        if take_profit is not None:
-            payload["takeProfit"] = take_profit
+        final_tp = tp3_price or tp2_price or tp1_price
+        if final_tp is not None:
+            payload["takeProfit"] = final_tp
         comment = str(data.get("comment") or account.trade_tag or "").strip()
         if comment:
             payload["comment"] = comment
@@ -820,6 +854,18 @@ def api_account_place_order(account_id: int) -> Response:
         except (TypeError, ValueError):
             ticket_id = None
 
+        settings = account.settings
+        meta = {
+            "tp1_percent": (
+                tp1_percent
+                if tp1_percent is not None
+                else float(settings.tp1_percent) if settings else 50.0
+            ),
+            "tp2_percent": float(settings.tp2_percent) if settings else None,
+            "tp3_percent": float(settings.tp3_percent) if settings else None,
+            "enable_break_even": bool(settings.enable_break_even) if settings else False,
+            "be_buffer_pips": float(settings.be_buffer) if settings else 0.0,
+        }
         trade = Trade(
             account_id=account.id,
             mt_ticket_id=ticket_id,
@@ -827,7 +873,9 @@ def api_account_place_order(account_id: int) -> Response:
             direction=direction,
             entry_price=entry_price or 0,
             stop_loss=stop_loss or 0,
-            take_profit_1=take_profit,
+            take_profit_1=tp1_price,
+            take_profit_2=tp2_price,
+            take_profit_3=tp3_price,
             position_size=volume,
             outcome="PENDING",
             entry_time=datetime.utcnow(),
@@ -835,6 +883,7 @@ def api_account_place_order(account_id: int) -> Response:
             model_tag=account.trade_tag,
             model_magic=account.magic_number,
             is_live=True,
+            entry_reasoning=_dump_trade_meta(meta),
         )
         session.add(trade)
         session.flush()
@@ -1157,13 +1206,11 @@ def api_backtests() -> Response:
         date_end = parse_date(payload.get("date_end"))
         starting_balance = payload.get("starting_balance")
         symbol = payload.get("symbol")
-        settings = payload.get("settings")
-
-        settings_json = None
-        if isinstance(settings, dict):
-            settings_json = json.dumps(settings)
-        elif isinstance(settings, str):
-            settings_json = settings
+        settings_raw = payload.get("settings")
+        settings, settings_error = _parse_settings_payload(settings_raw)
+        if settings_error:
+            return json_error(settings_error, 400)
+        settings_json = json.dumps(settings) if settings else None
 
         upload = request.files.get("csv")
         tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
@@ -1189,8 +1236,12 @@ def api_backtests() -> Response:
             return json_error(error, 400)
 
         user_config = load_user_config(session, user, model_mode=model)
-        if isinstance(settings, dict):
+        if settings:
             sanitized = sanitize_config(settings)
+            if not sanitized:
+                return json_error(
+                    "settings must include valid strategy config keys.", 400
+                )
             user_config.update(sanitized)
         if model:
             user_config["model_mode"] = model
@@ -1246,6 +1297,10 @@ def api_backtest() -> Response:
         if not user:
             return json_error("Unauthorized.", 401)
 
+        payload = request.form.to_dict() if request.form else {}
+        if request.is_json:
+            payload = request.get_json(silent=True) or payload
+
         upload = request.files.get("csv")
         if not upload or upload.filename == "":
             return json_error("No CSV file uploaded.", 400)
@@ -1260,12 +1315,33 @@ def api_backtest() -> Response:
             csv_path.unlink(missing_ok=True)
             return json_error(error, 400)
 
-        user_config = load_user_config(session, user)
+        model = payload.get("model")
+        starting_balance = payload.get("starting_balance")
+        settings_raw = payload.get("settings")
+        settings, settings_error = _parse_settings_payload(settings_raw)
+        if settings_error:
+            return json_error(settings_error, 400)
+
+        user_config = load_user_config(session, user, model_mode=model)
+        if settings:
+            sanitized = sanitize_config(settings)
+            if not sanitized:
+                return json_error(
+                    "settings must include valid strategy config keys.", 400
+                )
+            user_config.update(sanitized)
+        if model:
+            user_config["model_mode"] = model
         overrides = build_config_overrides(user_config)
+        if starting_balance is not None:
+            try:
+                overrides["ACCOUNT_BALANCE_OVERRIDE"] = float(starting_balance)
+            except (TypeError, ValueError):
+                pass
         job_id = create_backtest_job(
             session,
             user.id,
-            overrides.get("MODEL_MODE"),
+            model or overrides.get("MODEL_MODE"),
             starting_balance=overrides.get("ACCOUNT_BALANCE_OVERRIDE"),
             settings_json=json.dumps(user_config),
         )

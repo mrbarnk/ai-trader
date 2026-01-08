@@ -9,3 +9,4 @@ flask-socketio==5.3.6
 eventlet==0.36.1
 flask-cors==4.0.1
 alembic==1.13.2
+metaapi-cloud-sdk==29.1.1

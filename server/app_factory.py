@@ -5,12 +5,21 @@ import logging
 
 from flask import Flask, Request, request
 from flask_cors import CORS
+from sqlalchemy import text
 from werkzeug.exceptions import HTTPException
 
 from .http_utils import json_error
+from .models import engine
 from .routes_api import api
 from .routes_web import render_error_html, web
-from .settings import APP_PASSWORD, APP_USERNAME, CORS_ALLOWED_ORIGINS, MAX_CSV_BYTES
+from .settings import (
+    APP_PASSWORD,
+    APP_USERNAME,
+    CORS_ALLOWED_ORIGINS,
+    DB_STARTUP_CHECK,
+    DB_STARTUP_CHECK_TABLES,
+    MAX_CSV_BYTES,
+)
 from .socketio_manager import init_socketio
 
 
@@ -76,5 +85,19 @@ def create_app() -> Flask:
     app.register_blueprint(api)
     app.register_blueprint(web)
     init_socketio(app)
+    _log_db_startup(app)
 
     return app
+
+
+def _log_db_startup(app: Flask) -> None:
+    if not DB_STARTUP_CHECK:
+        return
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+            if DB_STARTUP_CHECK_TABLES:
+                conn.execute(text("SELECT 1 FROM users LIMIT 1"))
+        app.logger.info("Database connection check: OK")
+    except Exception as exc:  # pragma: no cover - defensive log
+        app.logger.error("Database connection check failed: %s", exc)

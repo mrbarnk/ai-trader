@@ -117,3 +117,41 @@ class MetaApiClient:
         if isinstance(data, dict):
             return data
         return {"raw": data}
+
+    def get_positions(self, account_id: str) -> list[dict[str, Any]]:
+        url = _join_url(self.client_url, f"/users/current/accounts/{account_id}/positions")
+        data = self._request("GET", url)
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and "positions" in data and isinstance(data["positions"], list):
+            return data["positions"]
+        return []
+
+    def get_symbol_price(self, account_id: str, symbol: str) -> dict[str, Any]:
+        url = _join_url(
+            self.client_url, f"/users/current/accounts/{account_id}/symbols/{symbol}/price"
+        )
+        data = self._request("GET", url)
+        return data or {}
+
+    def close_position(self, account_id: str, position_id: str, volume: float) -> dict[str, Any]:
+        path = METAAPI_TRADE_PATH.format(account_id=account_id)
+        url = _join_url(self.client_url, path)
+        payload = {"actionType": "POSITION_CLOSE", "positionId": position_id, "volume": volume}
+        data = self._request("POST", url, json=payload)
+        if isinstance(data, dict):
+            return data
+        return {"raw": data}
+
+    def modify_position(
+        self, account_id: str, position_id: str, stop_loss: float | None = None
+    ) -> dict[str, Any]:
+        path = METAAPI_TRADE_PATH.format(account_id=account_id)
+        url = _join_url(self.client_url, path)
+        payload: dict[str, Any] = {"actionType": "POSITION_MODIFY", "positionId": position_id}
+        if stop_loss is not None:
+            payload["stopLoss"] = stop_loss
+        data = self._request("POST", url, json=payload)
+        if isinstance(data, dict):
+            return data
+        return {"raw": data}

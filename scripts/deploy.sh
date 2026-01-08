@@ -4,6 +4,11 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-/srv/algotrade}"
 VENV_DIR="${VENV_DIR:-$APP_DIR/.venv}"
 SERVICE_NAME="${SERVICE_NAME:-algotrade-api}"
+WORKER_SERVICE_NAME="${WORKER_SERVICE_NAME:-${SERVICE_NAME}-worker}"
+SERVICE_USER="${SERVICE_USER:-$(whoami)}"
+SERVICE_GROUP="${SERVICE_GROUP:-$(id -gn)}"
+APP_PORT="${APP_PORT:-5100}"
+ENV_FILE="${ENV_FILE:-$APP_DIR/.env}"
 BRANCH="${BRANCH:-production}"
 REPO_URL="${REPO_URL:-}"
 
@@ -54,12 +59,70 @@ systemctl_cmd() {
   if [ "$SERVICE_SCOPE" = "system" ]; then
     $SUDO_CMD systemctl "$@"
   else
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
     systemctl --user "$@"
   fi
 }
 
-if systemctl_cmd is-active --quiet "$SERVICE_NAME"; then
-  systemctl_cmd reload "$SERVICE_NAME"
-else
-  systemctl_cmd start "$SERVICE_NAME"
+SERVICE_DIR="/etc/systemd/system"
+WANTED_BY="multi-user.target"
+if [ "$SERVICE_SCOPE" = "user" ]; then
+  SERVICE_DIR="$HOME/.config/systemd/user"
+  WANTED_BY="default.target"
+  mkdir -p "$SERVICE_DIR"
 fi
+
+write_service() {
+  local name="$1"
+  local exec_start="$2"
+  local unit_path="$SERVICE_DIR/$name.service"
+  if [ "$SERVICE_SCOPE" = "system" ]; then
+    cat <<EOF | $SUDO_CMD tee "$unit_path" >/dev/null
+[Unit]
+Description=$name
+After=network.target
+
+[Service]
+User=$SERVICE_USER
+Group=$SERVICE_GROUP
+WorkingDirectory=$APP_DIR
+EnvironmentFile=-$ENV_FILE
+ExecStart=$exec_start
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=$WANTED_BY
+EOF
+  else
+    cat <<EOF > "$unit_path"
+[Unit]
+Description=$name
+After=network.target
+
+[Service]
+WorkingDirectory=$APP_DIR
+EnvironmentFile=-$ENV_FILE
+ExecStart=$exec_start
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=$WANTED_BY
+EOF
+  fi
+}
+
+API_EXEC="$VENV_DIR/bin/gunicorn --worker-class eventlet --workers 1 --bind 0.0.0.0:$APP_PORT app:app"
+WORKER_EXEC="$VENV_DIR/bin/python -m server.metaapi_streaming_worker"
+
+write_service "$SERVICE_NAME" "$API_EXEC"
+write_service "$WORKER_SERVICE_NAME" "$WORKER_EXEC"
+
+systemctl_cmd daemon-reload
+systemctl_cmd enable "$SERVICE_NAME"
+systemctl_cmd enable "$WORKER_SERVICE_NAME"
+systemctl_cmd restart "$SERVICE_NAME"
+systemctl_cmd restart "$WORKER_SERVICE_NAME"

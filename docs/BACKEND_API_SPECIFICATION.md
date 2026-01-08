@@ -10,13 +10,14 @@
 
 1. [Overview](#overview)
 2. [Authentication](#authentication)
-3. [Database Schema](#database-schema)
-4. [API Endpoints](#api-endpoints)
-5. [Data Models](#data-models)
-6. [WebSocket Events](#websocket-events)
-7. [External Integrations](#external-integrations)
-8. [Error Handling](#error-handling)
-9. [Rate Limiting](#rate-limiting)
+3. [Strategy Configuration](#strategy-configuration)
+4. [Database Schema](#database-schema)
+5. [API Endpoints](#api-endpoints)
+6. [Data Models](#data-models)
+7. [WebSocket Events](#websocket-events)
+8. [External Integrations](#external-integrations)
+9. [Error Handling](#error-handling)
+10. [Rate Limiting](#rate-limiting)
 
 ---
 
@@ -172,6 +173,67 @@ interface User {
   "refresh_token": "<refresh_token>",
   "user": { "...": "..." }
 }
+```
+
+---
+
+## Strategy Configuration
+
+Strategy settings are model-specific and can be overridden per user or per backtest.
+
+- Per-user overrides: `GET/PUT /api/config`
+- Per-backtest overrides: `POST /api/backtests` (use `settings`)
+- Per-account model selection: `PATCH /api/accounts/:accountId/settings`
+
+### Supported Strategy Keys (Frontend)
+
+```
+model_mode, tp_leg_source, tp1_leg_percent, tp2_leg_percent,
+tp3_enabled, tp3_leg_source, tp3_leg_percent, sl_extra_pips,
+enable_break_even, use_1m_entry, premium_cross_level, discount_cross_level,
+risk_per_trade_pct, starting_balance
+```
+
+### Default Strategy Values (Server)
+
+Defaults are defined in `server/config_overrides.py` and differ by model.
+
+Aggressive (default):
+
+```
+model_mode: aggressive
+tp_leg_source: 4H
+tp1_leg_percent: 0.5
+tp2_leg_percent: 0.9
+tp3_enabled: false
+tp3_leg_source: 4H
+tp3_leg_percent: 1.0
+sl_extra_pips: 3.0
+enable_break_even: true
+use_1m_entry: true
+premium_cross_level: 0.5
+discount_cross_level: 0.5
+risk_per_trade_pct: 1.0
+starting_balance: 10000
+```
+
+Passive:
+
+```
+model_mode: passive
+tp_leg_source: 4H
+tp1_leg_percent: 0.5
+tp2_leg_percent: 0.9
+tp3_enabled: false
+tp3_leg_source: 4H
+tp3_leg_percent: 1.0
+sl_extra_pips: 3.0
+enable_break_even: true
+use_1m_entry: false
+premium_cross_level: 0.75
+discount_cross_level: 0.3
+risk_per_trade_pct: 1.0
+starting_balance: 10000
 ```
 
 ---
@@ -591,19 +653,19 @@ GET /api/config
 {
   "config": {
     "model_mode": "aggressive",
-    "tp_leg_source": "15M",
+    "tp_leg_source": "4H",
     "tp1_leg_percent": 0.5,
     "tp2_leg_percent": 0.9,
     "tp3_enabled": false,
     "tp3_leg_source": "4H",
     "tp3_leg_percent": 1.0,
-    "premium_cross_level": 0.75,
-    "discount_cross_level": 0.3,
+    "premium_cross_level": 0.5,
+    "discount_cross_level": 0.5,
     "sl_extra_pips": 3.0,
     "enable_break_even": true,
     "risk_per_trade_pct": 1.0,
     "starting_balance": 10000,
-    "use_1m_entry": false
+    "use_1m_entry": true
   }
 }
 ```
@@ -719,6 +781,10 @@ DELETE /api/accounts/:accountId
 POST /api/accounts/:accountId/sync
 ```
 
+Optional query/body flags:
+- `sync_trades=true` → ingest closed trades from MetaApi.
+- `manage_trades=true` → apply live trade management (TP1 partial close + break-even move).
+
 #### Place Trade Order
 ```
 POST /api/accounts/:accountId/orders
@@ -733,7 +799,10 @@ POST /api/accounts/:accountId/orders
   "volume": 0.2,
   "entry_price": 1.2755,
   "stop_loss": 1.2775,
-  "take_profit": 1.2690,
+  "tp1_price": 1.2690,
+  "tp2_price": 1.2660,
+  "tp3_price": 1.2630,
+  "tp1_percent": 50,
   "comment": "MODEL_AGGRESSIVE"
 }
 ```
@@ -741,6 +810,10 @@ POST /api/accounts/:accountId/orders
 Notes:
 - `order_type` defaults to `LIMIT` if omitted.
 - Allowed values: `LIMIT`, `STOP`, `MARKET`.
+- `take_profit` is accepted as an alias for `tp1_price`.
+- The final MetaApi TP uses `tp3_price` if provided, else `tp2_price`, else `tp1_price`.
+- If `manage_trades=true` is used on `/sync`, TP1 triggers a partial close using `tp1_percent`
+  (fallbacks to account settings) and moves SL to break-even using `be_buffer` from settings.
 
 ---
 
@@ -947,6 +1020,8 @@ POST /api/backtests
 ```
 
 CSV data can be provided as multipart upload (`csv`) or as a base64 string (`csv_base64`) until broker data providers are wired in.
+`settings` accepts the same keys as the Strategy Configuration section.
+If you submit multipart form data, send `settings` as a JSON-encoded string (the API parses it).
 
 `settings` must use the **strategy config keys** listed in the Strategy Configuration section
 (snake_case). Example keys: `tp_leg_source`, `tp1_leg_percent`, `tp2_leg_percent`, `tp3_enabled`,
@@ -1632,11 +1707,18 @@ The backend integrates with MetaTrader via MetaApi.cloud as the **primary** trad
 - `METAAPI_DEALS_PATH` (default `/users/current/accounts/{account_id}/deals`)
 - `METAAPI_TRADE_PATH` (default `/users/current/accounts/{account_id}/trade`)
 - `METAAPI_TIMEOUT_SECONDS` (default `15`)
+- `METAAPI_STREAMING_ENABLED` (default `true`)
+- `METAAPI_STREAMING_REFRESH_SECONDS` (default `60`)
+- `METAAPI_STREAMING_CHECK_SECONDS` (default `1`)
 
 #### Sync Endpoint
 - `POST /api/accounts/{id}/sync`
   - Optional JSON body: `{ "sync_trades": true, "start_time": "...", "end_time": "..." }`
   - Syncs balances and optionally ingests trade history.
+
+#### Streaming Worker (Break-Even Automation)
+- A dedicated MetaApi streaming worker listens for price updates and moves SL to BE when TP1 is hit.
+- Run it as a separate process: `python -m server.metaapi_streaming_worker`
 
 ### Optional Future Integrations
 - Manager API (prop firms)

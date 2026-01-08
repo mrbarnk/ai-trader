@@ -17,8 +17,13 @@ jobs:
           port: ${{ secrets.SSH_PORT || 22 }}
           script: |
             export APP_DIR="${{ secrets.APP_DIR }}"
+            export APP_DIR="${APP_DIR:-/srv/algotrade}"
             export VENV_DIR="${{ secrets.VENV_DIR }}"
-            export SERVICE_NAME="${{ secrets.SERVICE_NAME }}"
+            export VENV_DIR="${VENV_DIR:-$APP_DIR/.venv}"
+            export SERVICE_NAME="algotrade-api"
+            export WORKER_SERVICE_NAME="${SERVICE_NAME}-worker"
+            export APP_PORT="5100"
+            export ENV_FILE="$APP_DIR/.env"
             export REPO_URL="${{ secrets.REPO_URL }}"
             export BRANCH="production"
             bash "$APP_DIR/scripts/deploy.sh"

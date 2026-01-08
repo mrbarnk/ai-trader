@@ -25,6 +25,13 @@ METAAPI_TRADE_PATH = os.getenv(
 )
 METAAPI_TIMEOUT_SECONDS = int(os.getenv("METAAPI_TIMEOUT_SECONDS", "15"))
 METAAPI_SYNC_LOOKBACK_DAYS = int(os.getenv("METAAPI_SYNC_LOOKBACK_DAYS", "14"))
+METAAPI_STREAMING_ENABLED = os.getenv("METAAPI_STREAMING_ENABLED", "true").lower() == "true"
+METAAPI_STREAMING_REFRESH_SECONDS = int(
+    os.getenv("METAAPI_STREAMING_REFRESH_SECONDS", "60")
+)
+METAAPI_STREAMING_CHECK_SECONDS = float(
+    os.getenv("METAAPI_STREAMING_CHECK_SECONDS", "1")
+)
 PASSWORD_MIN_LENGTH = int(os.getenv("PASSWORD_MIN_LENGTH", "8"))
 PASSWORD_RESET_TTL_HOURS = int(os.getenv("PASSWORD_RESET_TTL_HOURS", "2"))
 EMAIL_VERIFY_TTL_HOURS = int(os.getenv("EMAIL_VERIFY_TTL_HOURS", "48"))
@@ -49,6 +56,8 @@ if _cors_raw.strip() == "*":
 else:
     CORS_ALLOWED_ORIGINS = [item.strip() for item in _cors_raw.split(",") if item.strip()]
 AUTO_CREATE_SCHEMA = os.getenv("AUTO_CREATE_SCHEMA", "true").lower() == "true"
+DB_STARTUP_CHECK = os.getenv("DB_STARTUP_CHECK", "true").lower() == "true"
+DB_STARTUP_CHECK_TABLES = os.getenv("DB_STARTUP_CHECK_TABLES", "false").lower() == "true"
 
 MAX_CSV_BYTES = 10 * 1024 * 1024
 MAX_CANDLES = 100_000

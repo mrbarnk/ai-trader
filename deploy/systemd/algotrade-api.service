@@ -1,0 +1,16 @@
+[Unit]
+Description=AlgoTrade API
+After=network.target
+
+[Service]
+User=algotrade
+Group=algotrade
+WorkingDirectory=/srv/algotrade
+EnvironmentFile=/srv/algotrade/.env
+ExecStart=/srv/algotrade/.venv/bin/gunicorn --worker-class eventlet --workers 1 --bind 0.0.0.0:5100 app:app
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

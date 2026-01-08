@@ -13,6 +13,7 @@ from trader import config
 
 from .config_overrides import apply_config_overrides
 from .models import Backtest, db_session
+from .notifications import create_notification, emit_notification, serialize_notification
 from .settings import MAX_CANDLES, MAX_RANGE_DAYS
 
 
@@ -211,8 +212,10 @@ def run_backtest_job(job_id: str, csv_path: Path, overrides: dict[str, Any]) -> 
             best_r=summary.get("best_r"),
             worst_r=summary.get("worst_r"),
         )
+        _notify_backtest(job_id, "completed", "Backtest completed.")
     except Exception as exc:
         update_backtest_job(job_id, status="failed", error_message=str(exc))
+        _notify_backtest(job_id, "failed", f"Backtest failed: {exc}")
     finally:
         config.LOG_DAILY_LIMITS = original_log_setting
         try:
@@ -220,6 +223,22 @@ def run_backtest_job(job_id: str, csv_path: Path, overrides: dict[str, Any]) -> 
                 csv_path.unlink()
         finally:
             shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def _notify_backtest(job_id: str, status: str, message: str) -> None:
+    with db_session() as session:
+        job = session.query(Backtest).filter_by(id=job_id).first()
+        if not job:
+            return
+        note = create_notification(
+            session,
+            job.user_id,
+            "backtest",
+            f"Backtest {status}",
+            message,
+            {"backtest_id": job_id, "status": status},
+        )
+        emit_notification(job.user_id, serialize_notification(note))
 
 
 def _load_rows(jsonl_path: Path) -> list[dict[str, Any]]:

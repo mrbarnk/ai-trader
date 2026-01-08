@@ -41,6 +41,8 @@ SMTP_USERNAME = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
 SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "false").lower() == "true"
+SOCKETIO_ASYNC_MODE = os.getenv("SOCKETIO_ASYNC_MODE", "threading")
+SOCKETIO_CORS_ORIGINS = os.getenv("SOCKETIO_CORS_ORIGINS")
 
 MAX_CSV_BYTES = 10 * 1024 * 1024
 MAX_CANDLES = 100_000

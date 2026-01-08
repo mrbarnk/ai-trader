@@ -9,6 +9,7 @@ from .http_utils import json_error
 from .routes_api import api
 from .routes_web import render_error_html, web
 from .settings import APP_PASSWORD, APP_USERNAME, MAX_CSV_BYTES
+from .socketio_manager import init_socketio
 
 
 def _check_auth(req: Request) -> bool:
@@ -34,7 +35,12 @@ def create_app() -> Flask:
 
     @app.before_request
     def enforce_basic_auth():
-        if request.path.startswith("/api/") or request.path.startswith("/auth/") or request.path == "/health":
+        if (
+            request.path.startswith("/api/")
+            or request.path.startswith("/auth/")
+            or request.path.startswith("/socket.io/")
+            or request.path == "/health"
+        ):
             return None
         if _check_auth(request):
             return None
@@ -52,5 +58,6 @@ def create_app() -> Flask:
 
     app.register_blueprint(api)
     app.register_blueprint(web)
+    init_socketio(app)
 
     return app

@@ -35,11 +35,13 @@ from .models import (
     ApiToken,
     Backtest,
     Mt5Account,
+    Notification,
     Trade,
     TradingModel,
     User,
     db_session,
 )
+from .notifications import create_notification, emit_notification, serialize_notification
 from .serializers import (
     serialize_account,
     serialize_backtest,
@@ -831,7 +833,71 @@ def api_account_place_order(account_id: int) -> Response:
             is_live=True,
         )
         session.add(trade)
+        session.flush()
+        note = create_notification(
+            session,
+            user.id,
+            "trade_executed",
+            "Trade order submitted",
+            f"{symbol} {direction} {order_type} submitted.",
+            {"trade_id": trade.id, "symbol": symbol, "direction": direction},
+        )
+        emit_notification(user.id, serialize_notification(note))
         return json_response({"order": response, "trade": serialize_trade(trade)}, 201)
+
+
+@api.route("/api/notifications", methods=["GET"])
+def api_notifications() -> Response:
+    with db_session() as session:
+        user = require_token(session)
+        if not user:
+            return json_error("Unauthorized.", 401)
+        query = session.query(Notification).filter_by(user_id=user.id)
+        read_filter = request.args.get("read")
+        if read_filter in {"true", "false"}:
+            query = query.filter(Notification.read.is_(read_filter == "true"))
+        limit = int(request.args.get("limit", 50))
+        offset = int(request.args.get("offset", 0))
+        total = query.count()
+        notes = (
+            query.order_by(Notification.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        return json_response(
+            {
+                "notifications": [serialize_notification(note) for note in notes],
+                "pagination": {"total": total, "limit": limit, "offset": offset},
+            }
+        )
+
+
+@api.route("/api/notifications/<int:notification_id>/read", methods=["PATCH"])
+def api_notification_read(notification_id: int) -> Response:
+    with db_session() as session:
+        user = require_token(session)
+        if not user:
+            return json_error("Unauthorized.", 401)
+        note = (
+            session.query(Notification)
+            .filter_by(id=notification_id, user_id=user.id)
+            .first()
+        )
+        if not note:
+            return json_error("Notification not found.", 404)
+        note.read = True
+        return json_response({"notification": serialize_notification(note)})
+
+
+@api.route("/api/notifications/read-all", methods=["POST"])
+def api_notifications_read_all() -> Response:
+    with db_session() as session:
+        user = require_token(session)
+        if not user:
+            return json_error("Unauthorized.", 401)
+        session.query(Notification).filter_by(user_id=user.id).update({"read": True})
+        return json_response({"ok": True})
 
 
 @api.route("/api/accounts/<int:account_id>/trades", methods=["GET"])

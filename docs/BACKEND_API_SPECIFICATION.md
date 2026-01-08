@@ -34,6 +34,11 @@ AlgoTrade AI is an automated forex trading platform that generates model signals
 ### Architecture Overview
 
 ```
+
+### Implementation Notes (Current Backend)
+
+- IDs are integer primary keys (not UUIDs).
+- WebSocket transport uses Socket.IO at `/socket.io/`.
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │   React App     │────▶│   REST API       │────▶│   PostgreSQL    │
 │   (Frontend)    │     │   (Backend)      │     │   (Database)    │
@@ -472,17 +477,15 @@ CREATE INDEX idx_backtests_status ON backtests(status);
 #### `notifications`
 ```sql
 CREATE TABLE notifications (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   
   type VARCHAR(50) NOT NULL,                   -- 'trade_executed', 'model_update', 'account_synced', etc.
   title VARCHAR(255) NOT NULL,
   message TEXT NOT NULL,
-  metadata JSONB,                              -- Additional context (trade_id, account_id, etc.)
+  data_json TEXT,                              -- Additional context (trade_id, account_id, etc.)
   
   read BOOLEAN DEFAULT FALSE,
-  read_at TIMESTAMPTZ,
-  
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -970,7 +973,7 @@ GET /api/notifications
 ```
 
 **Query Parameters:**
-- `unread_only`: boolean
+- `read`: boolean ("true" | "false")
 - `limit`: integer
 - `offset`: integer
 
@@ -979,19 +982,19 @@ GET /api/notifications
 {
   "notifications": [
     {
-      "id": "notif_1",
+      "id": 1,
       "type": "trade_executed",
       "title": "Trade Executed",
       "message": "GBPUSD buy order filled at 1.0845",
-      "time": "2 min ago",
-      "unread": true,
-      "metadata": {
-        "trade_id": "trade_123",
-        "account_id": "acc_123"
-      }
+      "read": false,
+      "data": {
+        "trade_id": 123,
+        "account_id": 45
+      },
+      "created_at": "2025-01-08T10:30:00Z"
     }
   ],
-  "unread_count": 2
+  "pagination": { "total": 2, "limit": 50, "offset": 0 }
 }
 ```
 
@@ -1365,34 +1368,33 @@ interface Notification {
 
 ## WebSocket Events
 
-Real-time updates for live trading. Connect to: `wss://api.algotrade.ai/ws`
+Real-time updates for live trading via Socket.IO. Connect to: `wss://api.algotrade.ai/socket.io/`
 
 ### Connection
 ```javascript
-// Client connects with auth token
-ws.send(JSON.stringify({
-  type: "auth",
-  token: "jwt_token_here"
-}));
+import { io } from "socket.io-client";
+
+const socket = io("https://api.algotrade.ai", {
+  path: "/socket.io/",
+  auth: { token: "<access_token>" }
+});
 ```
 
 ### Events (Server → Client)
 
-#### Trade Opened
+#### Notification
 ```json
 {
-  "event": "trade:opened",
+  "type": "trade_executed",
+  "title": "Trade order submitted",
+  "message": "GBPUSD SELL LIMIT submitted.",
+  "read": false,
   "data": {
-    "accountId": "acc_123",
-    "trade": {
-      "id": "trade_456",
-      "direction": "BUY",
-      "entryPrice": 1.27834,
-      "stopLoss": 1.27534,
-      "positionSize": 0.05,
-      "riskAmount": 12.50
-    }
-  }
+    "trade_id": 123,
+    "symbol": "GBPUSD",
+    "direction": "SELL"
+  },
+  "created_at": "2025-01-08T10:30:00Z"
 }
 ```
 

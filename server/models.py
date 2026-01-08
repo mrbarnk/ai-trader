@@ -66,6 +66,9 @@ class User(Base):
     configs = relationship("UserConfig", cascade="all, delete-orphan", back_populates="user")
     backtests = relationship("Backtest", cascade="all, delete-orphan", back_populates="user")
     accounts = relationship("Mt5Account", cascade="all, delete-orphan", back_populates="user")
+    notifications = relationship(
+        "Notification", cascade="all, delete-orphan", back_populates="user"
+    )
 
 
 class ApiToken(Base):
@@ -197,6 +200,20 @@ class Trade(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     account = relationship("Mt5Account", back_populates="trades")
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    type = Column(String(50), nullable=False)
+    title = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+    data_json = Column(Text)
+    read = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    user = relationship("User", back_populates="notifications")
 
 
 class TradingModel(Base):

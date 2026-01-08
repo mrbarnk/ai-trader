@@ -59,6 +59,10 @@ else:
 AUTO_CREATE_SCHEMA = os.getenv("AUTO_CREATE_SCHEMA", "true").lower() == "true"
 DB_STARTUP_CHECK = os.getenv("DB_STARTUP_CHECK", "true").lower() == "true"
 DB_STARTUP_CHECK_TABLES = os.getenv("DB_STARTUP_CHECK_TABLES", "false").lower() == "true"
+AUTO_RUN_MIGRATIONS = os.getenv("AUTO_RUN_MIGRATIONS", "true").lower() == "true"
+AUTO_RUN_MIGRATIONS_LOCK = os.getenv(
+    "AUTO_RUN_MIGRATIONS_LOCK", "/tmp/algotrade_migrations.lock"
+)
 
 MAX_CSV_BYTES = 10 * 1024 * 1024
 MAX_CANDLES = 100_000

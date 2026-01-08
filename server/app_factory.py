@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import hmac
 import logging
+import os
 
 from flask import Flask, Request, request
 from flask_cors import CORS
 from sqlalchemy import text
 from werkzeug.exceptions import HTTPException
+
+from alembic import command
+from alembic.config import Config
 
 from .http_utils import json_error
 from .models import engine
@@ -15,7 +19,11 @@ from .routes_web import render_error_html, web
 from .settings import (
     APP_PASSWORD,
     APP_USERNAME,
+    AUTO_RUN_MIGRATIONS,
+    AUTO_RUN_MIGRATIONS_LOCK,
+    BASE_DIR,
     CORS_ALLOWED_ORIGINS,
+    DATABASE_URL,
     DB_STARTUP_CHECK,
     DB_STARTUP_CHECK_TABLES,
     MAX_CSV_BYTES,
@@ -85,9 +93,39 @@ def create_app() -> Flask:
     app.register_blueprint(api)
     app.register_blueprint(web)
     init_socketio(app)
+    _run_migrations(app)
     _log_db_startup(app)
 
     return app
+
+
+def _run_migrations(app: Flask) -> None:
+    if not AUTO_RUN_MIGRATIONS:
+        return
+    lock_path = AUTO_RUN_MIGRATIONS_LOCK
+    lock_handle = None
+    try:
+        lock_handle = open(lock_path, "w", encoding="utf-8")
+        try:
+            import fcntl  # type: ignore
+
+            fcntl.flock(lock_handle, fcntl.LOCK_EX)
+        except Exception:
+            pass
+        alembic_cfg = Config(str(BASE_DIR / "alembic.ini"))
+        alembic_cfg.set_main_option("script_location", str(BASE_DIR / "migrations"))
+        alembic_cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
+        command.upgrade(alembic_cfg, "head")
+        app.logger.info("Database migrations applied.")
+    except Exception as exc:  # pragma: no cover - startup guard
+        app.logger.error("Database migration failed: %s", exc)
+        raise
+    finally:
+        if lock_handle:
+            try:
+                lock_handle.close()
+            except Exception:
+                pass
 
 
 def _log_db_startup(app: Flask) -> None:

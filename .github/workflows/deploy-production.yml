@@ -19,5 +19,6 @@ jobs:
             export APP_DIR="${{ secrets.APP_DIR }}"
             export VENV_DIR="${{ secrets.VENV_DIR }}"
             export SERVICE_NAME="${{ secrets.SERVICE_NAME }}"
+            export REPO_URL="${{ secrets.REPO_URL }}"
             export BRANCH="production"
             bash "$APP_DIR/scripts/deploy.sh"

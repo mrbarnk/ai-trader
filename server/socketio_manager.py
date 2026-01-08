@@ -1,6 +1,18 @@
 from __future__ import annotations
 
 from flask import request
+
+try:
+    import werkzeug.serving as _wz_serving
+    from werkzeug._reloader import run_with_reloader as _run_with_reloader
+except Exception:  # pragma: no cover - defensive import shim
+    _wz_serving = None
+    _run_with_reloader = None
+
+if _wz_serving is not None and _run_with_reloader is not None:
+    if not hasattr(_wz_serving, "run_with_reloader"):
+        _wz_serving.run_with_reloader = _run_with_reloader
+
 from flask_socketio import SocketIO, join_room
 
 from .jwt_utils import decode_access_token

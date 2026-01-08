@@ -38,7 +38,7 @@ if [ ! -d "$VENV_DIR" ]; then
 fi
 
 "$VENV_DIR/bin/pip" install --upgrade pip
-"$VENV_DIR/bin/pip" install -r requirements.txt
+"$VENV_DIR/bin/pip" install --upgrade --force-reinstall -r requirements.txt
 
 if [ -f "$VENV_DIR/bin/alembic" ]; then
   "$VENV_DIR/bin/alembic" upgrade head

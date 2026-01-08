@@ -56,6 +56,9 @@ AlgoTrade AI is an automated forex trading platform that generates model signals
 
 - IDs are integer primary keys (not UUIDs).
 - WebSocket transport uses Socket.IO at `/socket.io/`.
+- Email verification is disabled (signup marks `email_verified=true`).
+- Each MT5 account can select only **one** active model at a time.
+- CORS uses `CORS_ALLOWED_ORIGINS` and applies to `/api/*`, `/auth/*`, and `/socket.io/*`.
 
 ---
 
@@ -93,11 +96,11 @@ AlgoTrade AI is an automated forex trading platform that generates model signals
    - Body: `{ "token": "<reset_code>", "password": "<new_password>" }`
    - Resets password and revokes existing tokens.
 
-### Email Verification Flow (Implemented)
+### Email Verification Flow (Disabled for now)
 
 - `POST /auth/verify-email`
-  - If `token` is provided: verifies email using the code.
-  - If no token is provided: uses bearer token to send a new verification code.
+  - Returns `{ ok: true, message: "Email verification is disabled." }`.
+  - Signup currently marks `email_verified=true`.
 
 ### User Profile Fields
 
@@ -149,6 +152,13 @@ interface User {
 │   backtests     │──────▶│  backtest_trades │                
 └─────────────────┘       └──────────────────┘                
 ```
+
+### Migrations (Database Version Control)
+
+- Alembic manages schema changes (`alembic.ini`, `migrations/`).
+- Create a new migration: `alembic revision --autogenerate -m "describe change"`.
+- Apply migrations: `alembic upgrade head`.
+- Deploy scripts should run `alembic upgrade head` before starting the service.
 
 ### Tables
 
@@ -609,6 +619,9 @@ PATCH /api/accounts/:accountId/settings
 }
 ```
 
+Notes:
+- Only one model can be active at a time. Switching to a different model returns `409` unless you clear it first by setting `"selected_model": null`.
+
 #### Disconnect Account
 ```
 DELETE /api/accounts/:accountId
@@ -637,6 +650,10 @@ POST /api/accounts/:accountId/orders
   "comment": "MODEL_AGGRESSIVE"
 }
 ```
+
+Notes:
+- `order_type` defaults to `LIMIT` if omitted.
+- Allowed values: `LIMIT`, `STOP`, `MARKET`.
 
 ---
 
@@ -802,6 +819,9 @@ POST /api/models/:modelId/copy
   "use_real_balance": true
 }
 ```
+
+Notes:
+- An account can only follow one model at a time. If a different model is already active, this returns `409` unless you clear the model first.
 
 **Note:** Only one active model is allowed per account. If an account already has a different
 `selected_model`, the API returns `409` and you must first clear it via

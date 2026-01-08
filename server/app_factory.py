@@ -33,12 +33,17 @@ def _require_auth():
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = MAX_CSV_BYTES
+    supports_credentials = CORS_ALLOWED_ORIGINS != "*"
     CORS(
         app,
         resources={
             r"/api/*": {"origins": CORS_ALLOWED_ORIGINS},
             r"/auth/*": {"origins": CORS_ALLOWED_ORIGINS},
+            r"/socket.io/*": {"origins": CORS_ALLOWED_ORIGINS},
         },
+        supports_credentials=supports_credentials,
+        allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
+        methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     )
 
     @app.before_request

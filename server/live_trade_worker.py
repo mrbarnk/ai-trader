@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import threading
@@ -19,11 +18,6 @@ from .settings import (
     LIVE_TRADE_WORKER_ENABLED,
     METAAPI_SYNC_LOOKBACK_DAYS,
 )
-
-try:
-    from metaapi_cloud_sdk import MetaApi
-except Exception:
-    MetaApi = None
 
 logger = logging.getLogger(__name__)
 
@@ -120,43 +114,6 @@ def _order_action(direction: str, order_type: str) -> str | None:
     if order_type == "LIMIT":
         return "ORDER_TYPE_BUY_LIMIT" if direction == "BUY" else "ORDER_TYPE_SELL_LIMIT"
     return None
-
-
-async def _place_order_rpc(
-    token: str,
-    account_id: str,
-    region: str | None,
-    payload: dict[str, Any],
-) -> dict[str, Any]:
-    if MetaApi is None:
-        raise RuntimeError("MetaApi SDK not available")
-    metaapi = MetaApi(token)
-    account_api = metaapi.metatrader_account_api
-    account = await account_api.get_account(account_id)
-    try:
-        if getattr(account, "state", "") != "DEPLOYED":
-            await account.deploy()
-    except Exception:
-        pass
-    try:
-        await account.wait_connected()
-    except Exception:
-        pass
-    connection = account.get_rpc_connection()
-    await connection.connect()
-    await connection.wait_synchronized()
-    trade_method = getattr(connection, "trade", None)
-    if not callable(trade_method):
-        raise RuntimeError("MetaApi RPC trade method unavailable")
-    result = trade_method(payload)
-    if asyncio.iscoroutine(result):
-        result = await result
-    close_method = getattr(connection, "close", None)
-    if callable(close_method):
-        maybe = close_method()
-        if asyncio.iscoroutine(maybe):
-            await maybe
-    return result if isinstance(result, dict) else {"raw": result}
 
 
 def _build_signal_record(account: Mt5Account, signal) -> LiveSignal:
@@ -371,26 +328,14 @@ def run_worker() -> None:
                             payload["comment"] = comment
                         if account.magic_number:
                             payload["magic"] = int(account.magic_number)
-                        response: dict[str, Any] | None = None
                         try:
-                            response = asyncio.run(
-                                _place_order_rpc(
-                                    token=token,
-                                    account_id=str(account.metaapi_account_id),
-                                    region=account.metaapi_region,
-                                    payload=payload,
-                                )
+                            response = client.place_order(
+                                str(account.metaapi_account_id), payload
                             )
-                        except Exception as exc:
-                            logger.warning("RPC order failed, falling back to REST: %s", exc)
-                            try:
-                                response = client.place_order(
-                                    str(account.metaapi_account_id), payload
-                                )
-                            except MetaApiError as api_exc:
-                                signal_row.status = "order_failed"
-                                signal_row.error_message = str(api_exc)
-                                continue
+                        except MetaApiError as api_exc:
+                            signal_row.status = "order_failed"
+                            signal_row.error_message = str(api_exc)
+                            continue
                         ticket_id = (
                             response.get("orderId")
                             or response.get("positionId")

@@ -706,9 +706,7 @@ def api_accounts_connect() -> Response:
         session.add(account)
         session.flush()
         session.add(AccountSettings(account_id=account.id))
-        provision_metaapi = bool(
-            data.get("provision_metaapi") or data.get("metaapi_provision")
-        )
+        provision_metaapi = True
         if provision_metaapi and not account.metaapi_account_id:
             user_config = load_user_config(session, user)
             token = _resolve_metaapi_token(user_config)

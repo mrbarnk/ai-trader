@@ -404,6 +404,18 @@ def _ensure_default_models(session) -> None:
             "trading_description": "London session focus",
             "best_for": "Lower frequency",
         },
+        {
+            "id": "sniper",
+            "name": "Sniper",
+            "badge": "Liquidity",
+            "description": "HTF bias with 15M zones and 1M sweep entries.",
+            "entry_style": "Sweep + BOS",
+            "filters": "Zone tap + liquidity sweep",
+            "tp_strategy": "HTF target or RR",
+            "risk_description": "1% per trade",
+            "trading_description": "H4 -> 15M -> 1M",
+            "best_for": "Precision entries",
+        },
     ]
     existing = {model.id for model in session.query(TradingModel).all()}
     for item in defaults:

@@ -565,6 +565,9 @@ def run_backtest(
     ✅ FIXED: Main backtest loop with proper risk management
     """
     from . import config
+
+    selected_mode = (model_mode or config.MODEL_MODE or "aggressive").lower()
+    use_1m_entry = config.USE_1M_ENTRY or selected_mode == "sniper"
     
     # Initialize account and risk manager
     starting_balance = config.ACCOUNT_BALANCE_OVERRIDE or 10000.0
@@ -589,9 +592,9 @@ def run_backtest(
 
     source_seconds = source_minutes * 60
     candles_1m: list[Candle] | None = None
-    if config.USE_1M_ENTRY:
+    if use_1m_entry:
         if source_seconds != TIMEFRAME_SECONDS[TIMEFRAME_M1]:
-            raise ValueError("USE_1M_ENTRY requires 1-minute source candles")
+            raise ValueError("1-minute entry requires 1-minute source candles")
         candles_1m = resample_candles(
             base_candles, source_seconds, TIMEFRAME_SECONDS[TIMEFRAME_M1]
         )
@@ -615,7 +618,7 @@ def run_backtest(
         TIMEFRAME_M15: build_series(candles_15m, TIMEFRAME_M15),
         TIMEFRAME_H4: build_series(candles_4h, TIMEFRAME_H4),
     }
-    if config.USE_1M_ENTRY and candles_1m is not None:
+    if use_1m_entry and candles_1m is not None:
         series[TIMEFRAME_M1] = build_series(candles_1m, TIMEFRAME_M1)
     if candles_d1 is not None:
         series[TIMEFRAME_D1] = build_series(candles_d1, TIMEFRAME_D1)
@@ -624,16 +627,16 @@ def run_backtest(
     engine = get_engine(
         symbol=config.SYMBOL_VARIANTS[0],
         candle_provider=provider,
-        mode=model_mode or config.MODEL_MODE,
+        mode=selected_mode,
     )
     logger = SignalLogger(str(output_path))
     outcome_logger = SignalLogger(str(outcome_path))
 
-    step_timeframe = TIMEFRAME_M1 if config.USE_1M_ENTRY else TIMEFRAME_M5
+    step_timeframe = TIMEFRAME_M1 if use_1m_entry else TIMEFRAME_M5
     step_seconds = TIMEFRAME_SECONDS[step_timeframe]
-    step_candles = candles_1m if config.USE_1M_ENTRY else candles_5m
+    step_candles = candles_1m if use_1m_entry else candles_5m
     if step_candles is None:
-        raise ValueError("USE_1M_ENTRY requires 1-minute candle series")
+        raise ValueError("1-minute entry requires 1-minute candle series")
     
     # Track open trades
     open_trades = []
@@ -852,7 +855,7 @@ def parse_args() -> argparse.Namespace:
         "--model-mode",
         type=str,
         default=None,
-        help="Model mode: aggressive or passive (default: config.MODEL_MODE).",
+        help="Model mode: aggressive, passive, or sniper (default: config.MODEL_MODE).",
     )
     return parser.parse_args()
 

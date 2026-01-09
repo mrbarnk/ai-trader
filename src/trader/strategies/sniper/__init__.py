@@ -1,0 +1,1 @@
+"""Sniper strategy package."""

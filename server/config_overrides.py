@@ -68,6 +68,34 @@ MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
         "require_no_liquidity_sweep": False,
         "require_liquidity_sweep_sell": False,
     },
+    "sniper": {
+        "model_mode": "sniper",
+        "tp_leg_source": "4H",
+        "tp1_leg_percent": 0.5,
+        "tp2_leg_percent": 0.9,
+        "tp3_enabled": False,
+        "tp3_leg_source": "4H",
+        "tp3_leg_percent": 1.0,
+        "sl_extra_pips": 3.0,
+        "enable_break_even": True,
+        "use_real_balance": False,
+        "starting_balance": 10000.0,
+        "risk_per_trade_pct": 1.0,
+        "use_1m_entry": True,
+        "enable_1m_entry_sell": True,
+        "require_1m_choch_premium": False,
+        "require_5m_choch_premium": False,
+        "require_5m_choch_premium_sell": False,
+        "premium_cross_level": 0.5,
+        "discount_cross_level": 0.5,
+        "enable_spread_filter": False,
+        "max_spread_pips": 1.0,
+        "assume_zero_spread": False,
+        "enable_choch_range_filter": False,
+        "min_choch_range_pips": 6.0,
+        "require_no_liquidity_sweep": False,
+        "require_liquidity_sweep_sell": False,
+    },
 }
 
 BASE_DEFAULTS: dict[str, Any] = {
@@ -183,6 +211,9 @@ def build_config_overrides(user_config: dict[str, Any]) -> dict[str, Any]:
         ),
         "RISK_PER_TRADE_PCT": user_config.get(
             "risk_per_trade_pct", config.RISK_PER_TRADE_PCT
+        ),
+        "SNIPER_RISK_PER_TRADE_PCT": user_config.get(
+            "risk_per_trade_pct", config.SNIPER_RISK_PER_TRADE_PCT
         ),
         "USE_1M_ENTRY": user_config.get("use_1m_entry", config.USE_1M_ENTRY),
         "ENABLE_1M_ENTRY_SELL": user_config.get(

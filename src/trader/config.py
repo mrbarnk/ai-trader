@@ -3,10 +3,10 @@ from datetime import time
 SYMBOL_CANONICAL = "GU"
 SYMBOL_VARIANTS = ("GBPUSD", "GBPUSDm", "GBPUSD.r")
 
-# Strategy model: "aggressive" or "passive"
+# Strategy model: "aggressive", "passive", or "sniper"
 MODEL_MODE = "aggressive"
-MODEL_TAGS = {"aggressive": "AGGR", "passive": "PASS"}
-MODEL_MAGICS = {"aggressive": 1001, "passive": 2001}
+MODEL_TAGS = {"aggressive": "AGGR", "passive": "PASS", "sniper": "SNIP"}
+MODEL_MAGICS = {"aggressive": 1001, "passive": 2001, "sniper": 3001}
 
 PIP_SIZE = 0.0001
 # FIXED: Increase minimum sweep size to avoid noise
@@ -80,11 +80,17 @@ MIN_CHOCH_RANGE_PIPS = 6.0
 
 ENABLE_RISK_MANAGEMENT = True
 RISK_PER_TRADE_PCT = 0.5  # Risk 0.5% per trade
+SNIPER_RISK_PER_TRADE_PCT = 1.0
 ACCOUNT_BALANCE_OVERRIDE = 500.0
 PIP_VALUE_PER_LOT = 10.0
 MIN_LOT_SIZE = 0.01
 MAX_LOT_SIZE = 5.0
 LOT_STEP = 0.01
+
+# Sniper RR fallback targets
+SNIPER_TP1_RR = 3.0
+SNIPER_TP2_RR = 5.0
+SNIPER_TP3_RR = 10.0
 
 # NEW: Add these for better stop loss placement
 SL_CANDLE_LOOKBACK = 3  # Look back 3 candles for structure high/low

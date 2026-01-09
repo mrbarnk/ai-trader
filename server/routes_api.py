@@ -697,7 +697,6 @@ def api_accounts_connect() -> Response:
             broker=str(data.get("broker")).strip(),
             server=str(data.get("server")).strip(),
             password_encrypted=str(data.get("password")).strip(),
-            metaapi_account_id=str(data.get("metaapi_account_id") or "").strip() or None,
             metaapi_region=str(data.get("metaapi_region") or "").strip() or None,
             trade_tag=str(data.get("trade_tag") or "").strip() or None,
             magic_number=magic_number,
@@ -707,7 +706,7 @@ def api_accounts_connect() -> Response:
         session.flush()
         session.add(AccountSettings(account_id=account.id))
         provision_metaapi = True
-        if provision_metaapi and not account.metaapi_account_id:
+        if provision_metaapi:
             user_config = load_user_config(session, user)
             token = _resolve_metaapi_token(user_config)
             if not token:

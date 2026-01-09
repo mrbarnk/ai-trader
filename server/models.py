@@ -256,6 +256,7 @@ class Backtest(Base):
     starting_balance = Column(Numeric(15, 2))
     symbol = Column(String(20), default="GBPUSD")
     settings_json = Column(Text)
+    csv_path = Column(Text)
     status = Column(String(20), default="pending")
     progress = Column(Integer, default=0)
     error_message = Column(Text)

@@ -5,6 +5,7 @@ APP_DIR="${APP_DIR:-/srv/algotrade}"
 VENV_DIR="${VENV_DIR:-$APP_DIR/.venv}"
 SERVICE_NAME="${SERVICE_NAME:-algotrade-api}"
 WORKER_SERVICE_NAME="${WORKER_SERVICE_NAME:-${SERVICE_NAME}-worker}"
+BACKTEST_WORKER_SERVICE_NAME="${BACKTEST_WORKER_SERVICE_NAME:-${SERVICE_NAME}-backtest-worker}"
 SERVICE_USER="${SERVICE_USER:-$(whoami)}"
 SERVICE_GROUP="${SERVICE_GROUP:-$(id -gn)}"
 APP_PORT="${APP_PORT:-5100}"
@@ -117,12 +118,16 @@ EOF
 
 API_EXEC="$VENV_DIR/bin/gunicorn --worker-class eventlet --workers 1 --bind 0.0.0.0:$APP_PORT app:app"
 WORKER_EXEC="$VENV_DIR/bin/python -m server.metaapi_streaming_worker"
+BACKTEST_WORKER_EXEC="$VENV_DIR/bin/python -m server.backtest_worker"
 
 write_service "$SERVICE_NAME" "$API_EXEC"
 write_service "$WORKER_SERVICE_NAME" "$WORKER_EXEC"
+write_service "$BACKTEST_WORKER_SERVICE_NAME" "$BACKTEST_WORKER_EXEC"
 
 systemctl_cmd daemon-reload
 systemctl_cmd enable "$SERVICE_NAME"
 systemctl_cmd enable "$WORKER_SERVICE_NAME"
+systemctl_cmd enable "$BACKTEST_WORKER_SERVICE_NAME"
 systemctl_cmd restart "$SERVICE_NAME"
 systemctl_cmd restart "$WORKER_SERVICE_NAME"
+systemctl_cmd restart "$BACKTEST_WORKER_SERVICE_NAME"

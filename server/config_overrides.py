@@ -26,7 +26,6 @@ MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
         "starting_balance": 10000.0,
         "risk_per_trade_pct": 1.0,
         "use_1m_entry": True,
-        "enable_1m_entry_sell": True,
         "require_1m_choch_premium": True,
         "require_5m_choch_premium": True,
         "require_5m_choch_premium_sell": False,
@@ -54,7 +53,6 @@ MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
         "starting_balance": 10000.0,
         "risk_per_trade_pct": 1.0,
         "use_1m_entry": False,
-        "enable_1m_entry_sell": False,
         "require_1m_choch_premium": True,
         "require_5m_choch_premium": True,
         "require_5m_choch_premium_sell": False,
@@ -82,7 +80,6 @@ MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
         "starting_balance": 10000.0,
         "risk_per_trade_pct": 1.0,
         "use_1m_entry": True,
-        "enable_1m_entry_sell": True,
         "require_1m_choch_premium": False,
         "require_5m_choch_premium": False,
         "require_5m_choch_premium_sell": False,
@@ -130,7 +127,6 @@ CONFIG_BOOL_KEYS = {
     "enable_break_even",
     "use_real_balance",
     "use_1m_entry",
-    "enable_1m_entry_sell",
     "require_1m_choch_premium",
     "require_5m_choch_premium",
     "require_5m_choch_premium_sell",
@@ -216,9 +212,6 @@ def build_config_overrides(user_config: dict[str, Any]) -> dict[str, Any]:
             "risk_per_trade_pct", config.SNIPER_RISK_PER_TRADE_PCT
         ),
         "USE_1M_ENTRY": user_config.get("use_1m_entry", config.USE_1M_ENTRY),
-        "ENABLE_1M_ENTRY_SELL": user_config.get(
-            "enable_1m_entry_sell", config.ENABLE_1M_ENTRY_SELL
-        ),
         "REQUIRE_1M_CHOCH_PREMIUM": user_config.get(
             "require_1m_choch_premium", config.REQUIRE_1M_CHOCH_PREMIUM
         ),

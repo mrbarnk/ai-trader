@@ -30,13 +30,9 @@ NY_ENABLED = False  # Disabled since London covers 24h
 NY_START_UTC = time(12, 0)
 NY_END_UTC = time(14, 0)
 
-# FIXED: Enable 1M entry for sells to get better entries
 USE_1M_ENTRY = True
 REQUIRE_1M_CHOCH_PREMIUM = True
 REQUIRE_5M_CHOCH_PREMIUM = True
-
-# FIXED: Enable 1M entry for sells (was False, now True)
-ENABLE_1M_ENTRY_SELL = True
 
 # FIXED: Don't require premium on 5M for sells - too restrictive
 REQUIRE_5M_CHOCH_PREMIUM_SELL = False

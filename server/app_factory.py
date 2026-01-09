@@ -95,6 +95,7 @@ def create_app() -> Flask:
     init_socketio(app)
     _run_migrations(app)
     _log_db_startup(app)
+    _start_live_trade_worker(app)
 
     return app
 
@@ -139,3 +140,16 @@ def _log_db_startup(app: Flask) -> None:
         app.logger.info("Database connection check: OK")
     except Exception as exc:  # pragma: no cover - defensive log
         app.logger.error("Database connection check failed: %s", exc)
+
+
+def _start_live_trade_worker(app: Flask) -> None:
+    try:
+        from .live_trade_worker import start_live_trade_worker
+    except Exception as exc:
+        app.logger.warning("Live trade worker unavailable: %s", exc)
+        return
+    try:
+        start_live_trade_worker()
+        app.logger.info("Live trade worker started.")
+    except Exception as exc:
+        app.logger.warning("Live trade worker failed to start: %s", exc)

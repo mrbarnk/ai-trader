@@ -123,6 +123,9 @@ class Mt5Account(Base):
         "AccountSettings", cascade="all, delete-orphan", back_populates="account", uselist=False
     )
     trades = relationship("Trade", cascade="all, delete-orphan", back_populates="account")
+    live_signals = relationship(
+        "LiveSignal", cascade="all, delete-orphan", back_populates="account"
+    )
 
 
 class AccountSettings(Base):
@@ -200,6 +203,32 @@ class Trade(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     account = relationship("Mt5Account", back_populates="trades")
+
+
+class LiveSignal(Base):
+    __tablename__ = "live_signals"
+
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey("mt5_accounts.id"), nullable=False, index=True)
+    trade_id = Column(Integer, ForeignKey("trades.id"))
+    model = Column(String(20))
+    decision = Column(String(20))
+    symbol = Column(String(20))
+    direction = Column(String(4))
+    entry_price = Column(Numeric(10, 5))
+    stop_loss = Column(Numeric(10, 5))
+    take_profit_1 = Column(Numeric(10, 5))
+    take_profit_2 = Column(Numeric(10, 5))
+    take_profit_3 = Column(Numeric(10, 5))
+    rules_passed = Column(Text)
+    rules_failed = Column(Text)
+    status = Column(String(20), default="new")
+    error_message = Column(Text)
+    signal_time = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    account = relationship("Mt5Account", back_populates="live_signals")
+    trade = relationship("Trade")
 
 
 class Notification(Base):

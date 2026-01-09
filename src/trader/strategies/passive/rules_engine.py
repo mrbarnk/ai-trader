@@ -363,9 +363,7 @@ class SignalEngine:
         rules_passed.append("STEP_6_5M_AFTER_PULLBACK")
 
         entry_event = choc_event
-        use_1m_entry = config.USE_1M_ENTRY and (
-            direction != "SELL" or config.ENABLE_1M_ENTRY_SELL
-        )
+        use_1m_entry = config.USE_1M_ENTRY
         if use_1m_entry:
             swings_1m = find_swings(
                 candles_1m or [], config.SWING_LEFT, config.SWING_RIGHT

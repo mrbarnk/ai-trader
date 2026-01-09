@@ -397,19 +397,62 @@ class SignalEngine:
         recent_candles = entry_candles[lookback_start:entry_event.index + 1]
         
         sl_buffer = config.SL_EXTRA_PIPS * config.PIP_SIZE
-        
+
+
         if direction == "SELL":
-            structure_high = max(c.high for c in recent_candles)
-            stop_loss = self._round_price(structure_high + sl_buffer)
+            # The CHoCH breaks a swing HIGH (the defining swing)
+            # This is the last high before price broke down
+            if entry_event.defining_swing_price is None:
+                return fail("STEP_7_SL_SWING_MISSING")
+            
+            # Get the actual HIGH of that swing candle (not just swing point)
+            if entry_event.defining_swing_index is None:
+                # Fallback: use the defining swing price
+                swing_high = entry_event.defining_swing_price
+            else:
+                # Better: use the actual candle high (includes wick)
+                swing_candle = entry_candles[entry_event.defining_swing_index]
+                swing_high = swing_candle.high
+            
+            stop_loss = self._round_price(swing_high + sl_buffer)
             
             if stop_loss <= entry_price:
                 return fail("STEP_7_SL_BELOW_ENTRY")
-        else:
-            structure_low = min(c.low for c in recent_candles)
-            stop_loss = self._round_price(structure_low - sl_buffer)
+
+        else:  # BUY
+            # The CHoCH breaks a swing LOW (the defining swing)
+            # This is the last low before price broke up
+            if entry_event.defining_swing_price is None:
+                return fail("STEP_7_SL_SWING_MISSING")
+            
+            # Get the actual LOW of that swing candle (not just swing point)
+            if entry_event.defining_swing_index is None:
+                # Fallback: use the defining swing price
+                swing_low = entry_event.defining_swing_price
+            else:
+                # Better: use the actual candle low (includes wick)
+                swing_candle = entry_candles[entry_event.defining_swing_index]
+                swing_low = swing_candle.low
+            
+            stop_loss = self._round_price(swing_low - sl_buffer)
             
             if stop_loss >= entry_price:
                 return fail("STEP_7_SL_ABOVE_ENTRY")
+
+        rules_passed.append("STEP_7_SL_VALID")
+        
+        # if direction == "SELL":
+        #     structure_high = max(c.high for c in recent_candles)
+        #     stop_loss = self._round_price(structure_high + sl_buffer)
+            
+        #     if stop_loss <= entry_price:
+        #         return fail("STEP_7_SL_BELOW_ENTRY")
+        # else:
+        #     structure_low = min(c.low for c in recent_candles)
+        #     stop_loss = self._round_price(structure_low - sl_buffer)
+            
+        #     if stop_loss >= entry_price:
+        #         return fail("STEP_7_SL_ABOVE_ENTRY")
         
         rules_passed.append("STEP_7_SL_VALID")
 

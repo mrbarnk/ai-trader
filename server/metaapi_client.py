@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -97,15 +98,31 @@ class MetaApiClient:
 
     def _run(self, coro):
         try:
-            return asyncio.run(coro)
-        except RuntimeError as exc:
-            if "asyncio.run()" in str(exc):
-                raise MetaApiError(
-                    "MetaApi SDK call attempted inside a running event loop."
-                ) from exc
-            raise MetaApiError(self._format_error("MetaApi SDK error", exc)) from exc
-        except Exception as exc:
-            raise MetaApiError(self._format_error("MetaApi SDK error", exc)) from exc
+            asyncio.get_running_loop()
+        except RuntimeError:
+            try:
+                return asyncio.run(coro)
+            except Exception as exc:
+                raise MetaApiError(self._format_error("MetaApi SDK error", exc)) from exc
+        return self._run_in_thread(coro)
+
+    def _run_in_thread(self, coro):
+        result: dict[str, Any] = {}
+
+        def runner() -> None:
+            try:
+                result["value"] = asyncio.run(coro)
+            except Exception as exc:
+                result["error"] = exc
+
+        thread = threading.Thread(target=runner, name="MetaApiSDKRunner")
+        thread.start()
+        thread.join()
+
+        error = result.get("error")
+        if error:
+            raise MetaApiError(self._format_error("MetaApi SDK error", error))
+        return result.get("value")
 
     def _format_error(self, prefix: str, exc: Exception) -> str:
         details = getattr(exc, "details", None)

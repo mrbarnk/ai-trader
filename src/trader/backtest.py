@@ -537,17 +537,18 @@ def build_series(candles: list[Candle], timeframe: int) -> TimeframeSeries:
     return TimeframeSeries(timeframe=timeframe, candles=candles, close_times=close_times)
 
 
-def trade_identity(record: dict) -> tuple:
-    def normalize_price(value: float | str | None) -> float | None:
-        if value is None:
-            return None
-        if isinstance(value, str) and value.strip().lower() in {"", "n/a"}:
-            return None
-        try:
-            return round(float(value), 5)
-        except (TypeError, ValueError):
-            return None
+def normalize_price(value: float | str | None) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().lower() in {"", "n/a"}:
+        return None
+    try:
+        return round(float(value), 5)
+    except (TypeError, ValueError):
+        return None
 
+
+def trade_identity(record: dict) -> tuple:
     direction = str(record.get("direction") or "").upper() or None
     return (
         direction,
@@ -650,6 +651,7 @@ def run_backtest(
     pending_trades = []
     pending_trade_keys: set[tuple] = set()
     seen_trade_keys: set[tuple] = set()
+    closed_trade_keys: set[tuple] = set()
     
     total_steps = max(len(step_candles) - 1, 1)
     last_percent = -1
@@ -747,6 +749,13 @@ def run_backtest(
                 stop_loss = trade_data['stop_loss']
                 exit_price = outcome['exit_price']
                 direction = trade_data['direction']
+
+                closed_key = trade_identity(trade_data) + (
+                    normalize_price(exit_price),
+                )
+                if closed_key in closed_trade_keys:
+                    closed_indices.append(idx)
+                    continue
                 
                 # Calculate risk in pips
                 if direction == "SELL":
@@ -782,6 +791,7 @@ def run_backtest(
                 
                 # Log
                 outcome_logger.log(trade_data)
+                closed_trade_keys.add(closed_key)
                 
                 # Mark for removal
                 closed_indices.append(idx)

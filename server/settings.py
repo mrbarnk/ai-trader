@@ -24,6 +24,7 @@ METAAPI_TRADE_PATH = os.getenv(
     "METAAPI_TRADE_PATH", "/users/current/accounts/{account_id}/trade"
 )
 METAAPI_TIMEOUT_SECONDS = int(os.getenv("METAAPI_TIMEOUT_SECONDS", "15"))
+METAAPI_SSL_VERIFY = os.getenv("METAAPI_SSL_VERIFY", "true").lower() == "true"
 METAAPI_SYNC_LOOKBACK_DAYS = int(os.getenv("METAAPI_SYNC_LOOKBACK_DAYS", "14"))
 METAAPI_STREAMING_ENABLED = os.getenv("METAAPI_STREAMING_ENABLED", "true").lower() == "true"
 METAAPI_STREAMING_REFRESH_SECONDS = int(

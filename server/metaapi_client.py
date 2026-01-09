@@ -10,6 +10,7 @@ from .settings import (
     METAAPI_DEALS_PATH,
     METAAPI_PROVISIONING_URL,
     METAAPI_TRADE_PATH,
+    METAAPI_SSL_VERIFY,
     METAAPI_TIMEOUT_SECONDS,
 )
 
@@ -45,6 +46,7 @@ class MetaApiClient:
                 url,
                 headers=headers,
                 timeout=METAAPI_TIMEOUT_SECONDS,
+                verify=METAAPI_SSL_VERIFY,
                 **kwargs,
             )
         except requests.RequestException as exc:

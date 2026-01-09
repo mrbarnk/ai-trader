@@ -48,4 +48,9 @@ def serialize_notification(note: Notification) -> dict[str, Any]:
 
 
 def emit_notification(user_id: int, payload: dict[str, Any]) -> None:
-    socketio.emit("notification", payload, room=f"user_{user_id}")
+    try:
+        if socketio is not None:
+            socketio.emit("notification", payload, room=f"user_{user_id}")
+    except Exception as e:
+        # Log error but don't crash
+        print(f"Failed to emit notification: {e}")

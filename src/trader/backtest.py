@@ -560,6 +560,24 @@ def trade_identity(record: dict) -> tuple:
     )
 
 
+def base_trade_key(record: dict) -> tuple:
+    direction = str(record.get("direction") or "").upper() or None
+    return (
+        direction,
+        normalize_price(record.get("entry")),
+        normalize_price(record.get("stop_loss")),
+    )
+
+
+def closed_trade_key(record: dict, exit_price: float | None) -> tuple:
+    direction = str(record.get("direction") or "").upper() or None
+    return (
+        direction,
+        normalize_price(record.get("entry")),
+        normalize_price(exit_price),
+    )
+
+
 def run_backtest(
     csv_path: Path,
     source_minutes: int,
@@ -650,6 +668,7 @@ def run_backtest(
     open_trades = []
     pending_trades = []
     pending_trade_keys: set[tuple] = set()
+    open_trade_keys: set[tuple] = set()
     seen_trade_keys: set[tuple] = set()
     closed_trade_keys: set[tuple] = set()
     
@@ -717,10 +736,10 @@ def run_backtest(
                 continue
             if check_entry_fill(candle, entry_price, entry_price, direction):
                 trade_data["entry_filled_time"] = candle.time_utc
-                trade_key = trade_data.get("trade_key") or trade_identity(trade_data)
+                trade_key = trade_data.get("base_trade_key") or base_trade_key(trade_data)
                 if trade_key:
                     pending_trade_keys.discard(trade_key)
-                    seen_trade_keys.add(trade_key)
+                    open_trade_keys.add(trade_key)
                 open_trades.append(trade_data)
                 activated_indices.append(idx)
 
@@ -750,12 +769,15 @@ def run_backtest(
                 exit_price = outcome['exit_price']
                 direction = trade_data['direction']
 
-                closed_key = trade_identity(trade_data) + (
-                    normalize_price(exit_price),
-                )
+                closed_key = closed_trade_key(trade_data, exit_price)
+                trade_key = trade_data.get("base_trade_key") or base_trade_key(trade_data)
                 if closed_key in closed_trade_keys:
                     closed_indices.append(idx)
+                    if trade_key:
+                        open_trade_keys.discard(trade_key)
                     continue
+                if trade_key:
+                    open_trade_keys.discard(trade_key)
                 
                 # Calculate risk in pips
                 if direction == "SELL":
@@ -827,7 +849,7 @@ def run_backtest(
         signal = engine.evaluate(now_utc)
 
         if signal.decision == "TRADE":
-            signal_key = trade_identity(
+            trade_key = trade_identity(
                 {
                     "direction": signal.direction,
                     "entry": signal.entry,
@@ -836,9 +858,18 @@ def run_backtest(
                     "tp2_price": signal.tp2_price,
                 }
             )
-            if signal_key in seen_trade_keys or signal_key in pending_trade_keys:
+            base_key = base_trade_key(
+                {
+                    "direction": signal.direction,
+                    "entry": signal.entry,
+                    "stop_loss": signal.stop_loss,
+                }
+            )
+            if base_key in seen_trade_keys or base_key in pending_trade_keys:
                 continue
-            if any(trade_identity(trade) == signal_key for trade in open_trades):
+            if base_key in open_trade_keys:
+                continue
+            if any(base_trade_key(trade) == base_key for trade in open_trades):
                 continue
             logger.log(signal)
             # ✅ Calculate position size based on current balance
@@ -853,9 +884,11 @@ def run_backtest(
             record['balance_before'] = current_balance
             record['position_size_lots'] = position_size  # ✅ Store calculated size
             record['pending_from_time'] = now_utc
-            record['trade_key'] = signal_key
+            record['trade_key'] = trade_key
+            record['base_trade_key'] = base_key
             pending_trades.append(record)
-            pending_trade_keys.add(signal_key)
+            pending_trade_keys.add(base_key)
+            seen_trade_keys.add(base_key)
         else:
             logger.log(signal)
     

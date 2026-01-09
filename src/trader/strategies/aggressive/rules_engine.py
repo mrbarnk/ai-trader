@@ -911,10 +911,6 @@ class SignalEngine:
         if not (0 < config.TP1_LEG_PERCENT <= 2.0 and 0 < config.TP2_LEG_PERCENT <= 2.0):
             return None
         
-        # ✅ Ensure TP2 is MORE profit than TP1
-        if config.TP2_LEG_PERCENT <= config.TP1_LEG_PERCENT:
-            return None
-        
         if direction == "SELL":
             target = tp_leg.end_price  # The low we're targeting
             distance_to_target = entry_price - target

@@ -67,6 +67,14 @@ AUTO_RUN_MIGRATIONS_LOCK = os.getenv(
 MAX_CSV_BYTES = 10 * 1024 * 1024
 MAX_CANDLES = 100_000
 MAX_RANGE_DAYS = 93
+BACKTEST_WORKER_ENABLED = os.getenv("BACKTEST_WORKER_ENABLED", "true").lower() == "true"
+BACKTEST_WORKER_POLL_SECONDS = float(
+    os.getenv("BACKTEST_WORKER_POLL_SECONDS", "2.0")
+)
+BACKTEST_UPLOAD_DIR = Path(
+    os.getenv("BACKTEST_UPLOAD_DIR", str(BASE_DIR / "data" / "backtests"))
+)
+BACKTEST_KEEP_CSV = os.getenv("BACKTEST_KEEP_CSV", "true").lower() == "true"
 
 BASE_STYLE = """
     :root {

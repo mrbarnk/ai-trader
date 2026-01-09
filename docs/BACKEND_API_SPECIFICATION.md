@@ -1163,6 +1163,32 @@ GET /api/backtests/:backtestId
 `rows` are returned only from the **detail** endpoint (`GET /api/backtests/:backtestId`).
 The list endpoint (`GET /api/backtests`) omits rows for size.
 
+#### Get Backtest Candles
+```
+GET /api/backtests/:backtestId/candles?timeframe=1M
+```
+
+**Query Parameters:**
+- `timeframe`: `1M` | `5M` | `15M` | `30M` | `1H` | `4H` | `1D`
+
+**Response:**
+```json
+{
+  "candles": [
+    {
+      "time": 1704067200,
+      "open": 1.27345,
+      "high": 1.27512,
+      "low": 1.27298,
+      "close": 1.27456,
+      "volume": 1520
+    }
+  ]
+}
+```
+
+Candles cover the full date range of the uploaded CSV, resampled to the requested timeframe.
+
 #### Delete Backtest
 ```
 DELETE /api/backtests/:backtestId

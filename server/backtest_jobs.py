@@ -11,10 +11,10 @@ from typing import Any
 from trader.backtest import load_csv_candles, run_backtest
 from trader import config
 
-from .config_overrides import apply_config_overrides
+from .config_overrides import apply_config_overrides, build_config_overrides
 from .models import Backtest, db_session
 from .notifications import create_notification, emit_notification, serialize_notification
-from .settings import MAX_CANDLES, MAX_RANGE_DAYS
+from .settings import BACKTEST_KEEP_CSV, MAX_CANDLES, MAX_RANGE_DAYS
 
 
 def parse_date(value: str | None) -> date | None:
@@ -134,6 +134,7 @@ def create_backtest_job(
     starting_balance: float | None = None,
     symbol: str | None = None,
     settings_json: str | None = None,
+    csv_path: Path | None = None,
 ) -> str:
     job_id = secrets.token_urlsafe(12)
     job = Backtest(
@@ -146,6 +147,7 @@ def create_backtest_job(
         starting_balance=starting_balance,
         symbol=symbol or "GBPUSD",
         settings_json=settings_json,
+        csv_path=str(csv_path) if csv_path else None,
         status="pending",
         progress=0,
     )
@@ -163,15 +165,65 @@ def update_backtest_job(job_id: str, **fields: Any) -> None:
             setattr(job, key, value)
 
 
-def run_backtest_job(job_id: str, csv_path: Path, overrides: dict[str, Any]) -> None:
+def run_backtest_job(
+    job_id: str,
+    csv_path: Path | None = None,
+    overrides: dict[str, Any] | None = None,
+) -> None:
     output_dir = Path(tempfile.mkdtemp(prefix="backtest_"))
     output_path = output_dir / "signals.jsonl"
     outcome_path = output_path.with_name(output_path.stem + "_outcomes.jsonl")
+    cleanup_path: Path | None = None
+    start_dt: datetime | None = None
+    end_dt: datetime | None = None
+    job_settings_json: str | None = None
+    job_model: str | None = None
+    job_starting_balance: float | None = None
+
+    with db_session() as session:
+        job = session.query(Backtest).filter_by(id=job_id).first()
+        if not job:
+            return
+        job_settings_json = job.settings_json
+        job_model = job.model
+        job_starting_balance = (
+            float(job.starting_balance) if job.starting_balance is not None else None
+        )
+        if csv_path is None and job.csv_path:
+            csv_path = Path(job.csv_path)
+        cleanup_path = csv_path
+        start_dt = _date_bounds(job.date_start, is_end=False)
+        end_dt = _date_bounds(job.date_end, is_end=True)
+
+    if csv_path is None:
+        update_backtest_job(job_id, status="failed", error_message="CSV file is missing.")
+        return
+    if not csv_path.exists():
+        update_backtest_job(
+            job_id, status="failed", error_message="CSV file was removed."
+        )
+        return
+
+    if overrides is None:
+        user_config: dict[str, Any] = {}
+        if job_settings_json:
+            try:
+                user_config = json.loads(job_settings_json)
+            except json.JSONDecodeError:
+                user_config = {}
+        if job_model:
+            user_config.setdefault("model_mode", job_model)
+        overrides = build_config_overrides(user_config)
+
+    if job_starting_balance is not None:
+        overrides["ACCOUNT_BALANCE_OVERRIDE"] = job_starting_balance
+
     update_backtest_job(
         job_id,
         status="processing",
         progress=0,
         starting_balance=overrides.get("ACCOUNT_BALANCE_OVERRIDE"),
+        csv_path=str(csv_path),
     )
 
     def progress_callback(step_index: int, total_steps: int) -> None:
@@ -182,13 +234,6 @@ def run_backtest_job(job_id: str, csv_path: Path, overrides: dict[str, Any]) -> 
         update_backtest_job(job_id, progress=percent)
 
     original_log_setting = config.LOG_DAILY_LIMITS
-    start_dt: datetime | None = None
-    end_dt: datetime | None = None
-    with db_session() as session:
-        job = session.query(Backtest).filter_by(id=job_id).first()
-        if job:
-            start_dt = _date_bounds(job.date_start, is_end=False)
-            end_dt = _date_bounds(job.date_end, is_end=True)
     config.LOG_DAILY_LIMITS = False
     try:
         if start_dt is None and end_dt is None:
@@ -248,8 +293,9 @@ def run_backtest_job(job_id: str, csv_path: Path, overrides: dict[str, Any]) -> 
     finally:
         config.LOG_DAILY_LIMITS = original_log_setting
         try:
-            if csv_path.exists():
-                csv_path.unlink()
+            if not BACKTEST_KEEP_CSV and cleanup_path and cleanup_path.exists():
+                cleanup_path.unlink()
+                update_backtest_job(job_id, csv_path=None)
         finally:
             shutil.rmtree(output_dir, ignore_errors=True)
 

@@ -5,14 +5,15 @@ import hashlib
 import _hashlib
 import json
 import secrets
-import tempfile
 import threading
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from flask import Blueprint, Response, request
 from werkzeug.security import check_password_hash, generate_password_hash
 from datetime import datetime, timedelta
+from trader.backtest import load_csv_candles, resample_candles
 
 from .backtest_jobs import (
     create_backtest_job,
@@ -53,6 +54,8 @@ from .serializers import (
 )
 from .trade_management import manage_break_even_for_account
 from .settings import (
+    BACKTEST_UPLOAD_DIR,
+    BACKTEST_WORKER_ENABLED,
     EMAIL_VERIFY_TTL_HOURS,
     METAAPI_SYNC_LOOKBACK_DAYS,
     METAAPI_TOKEN,
@@ -107,6 +110,30 @@ def _validate_strategy_settings(
     if not sanitized:
         return {}, f"{label} must include valid strategy config keys."
     return sanitized, None
+
+
+_CANDLE_TIMEFRAMES_SECONDS = {
+    "1M": 60,
+    "5M": 5 * 60,
+    "15M": 15 * 60,
+    "30M": 30 * 60,
+    "1H": 60 * 60,
+    "4H": 4 * 60 * 60,
+    "1D": 24 * 60 * 60,
+}
+
+
+def _infer_source_seconds(candles: list[Any]) -> int | None:
+    if len(candles) < 2:
+        return None
+    deltas: list[int] = []
+    for idx in range(1, len(candles)):
+        delta = int((candles[idx].time_utc - candles[idx - 1].time_utc).total_seconds())
+        if delta > 0:
+            deltas.append(delta)
+    if not deltas:
+        return None
+    return Counter(deltas).most_common(1)[0][0]
 
 
 ACCOUNT_SETTINGS_BOOL_FIELDS = {
@@ -1267,10 +1294,10 @@ def api_backtests() -> Response:
             return json_error(settings_error, 400)
         settings_json = json.dumps(settings) if settings else None
 
+        BACKTEST_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         upload = request.files.get("csv")
-        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
-        csv_path = Path(tmp_file.name)
-        tmp_file.close()
+        csv_filename = f"{secrets.token_urlsafe(12)}.csv"
+        csv_path = BACKTEST_UPLOAD_DIR / csv_filename
         if upload and upload.filename:
             upload.save(csv_path)
         else:
@@ -1315,14 +1342,15 @@ def api_backtests() -> Response:
             starting_balance=overrides.get("ACCOUNT_BALANCE_OVERRIDE"),
             symbol=symbol,
             settings_json=settings_json or json.dumps(user_config),
+            csv_path=csv_path,
         )
-
-        thread = threading.Thread(
-            target=run_backtest_job,
-            args=(job_id, csv_path, overrides),
-            daemon=True,
-        )
-        thread.start()
+        if not BACKTEST_WORKER_ENABLED:
+            thread = threading.Thread(
+                target=run_backtest_job,
+                args=(job_id, csv_path, overrides),
+                daemon=True,
+            )
+            thread.start()
 
         return json_response({"id": job_id, "status": "pending", "progress": 0}, 202)
 
@@ -1343,6 +1371,62 @@ def api_backtest_detail(backtest_id: str) -> Response:
         return json_response(serialize_backtest(backtest))
 
 
+@api.route("/api/backtests/<backtest_id>/candles", methods=["GET"])
+def api_backtest_candles(backtest_id: str) -> Response:
+    timeframe = (request.args.get("timeframe") or "").upper()
+    target_seconds = _CANDLE_TIMEFRAMES_SECONDS.get(timeframe)
+    if not target_seconds:
+        allowed = ", ".join(sorted(_CANDLE_TIMEFRAMES_SECONDS))
+        return json_error(f"Invalid timeframe. Allowed: {allowed}.", 400)
+
+    with db_session() as session:
+        user = require_token(session)
+        if not user:
+            return json_error("Unauthorized.", 401)
+        backtest = (
+            session.query(Backtest)
+            .filter_by(id=backtest_id, user_id=user.id)
+            .first()
+        )
+        if not backtest:
+            return json_error("Backtest not found.", 404)
+        if not backtest.csv_path:
+            return json_error("Backtest CSV is not available.", 404)
+        csv_path = Path(backtest.csv_path)
+
+    if not csv_path.exists():
+        return json_error("Backtest CSV is not available.", 404)
+
+    candles = load_csv_candles(csv_path)
+    if not candles:
+        return json_response({"candles": []})
+
+    source_seconds = _infer_source_seconds(candles)
+    if not source_seconds:
+        return json_error("Unable to infer CSV candle timeframe.", 400)
+    if target_seconds < source_seconds:
+        return json_error("Requested timeframe is smaller than CSV timeframe.", 400)
+    if target_seconds == source_seconds:
+        resampled = candles
+    elif target_seconds % source_seconds != 0:
+        return json_error("Requested timeframe must be a multiple of CSV timeframe.", 400)
+    else:
+        resampled = resample_candles(candles, source_seconds, target_seconds)
+
+    payload = [
+        {
+            "time": int(candle.time_utc.timestamp()),
+            "open": candle.open,
+            "high": candle.high,
+            "low": candle.low,
+            "close": candle.close,
+            "volume": None,
+        }
+        for candle in resampled
+    ]
+    return json_response({"candles": payload})
+
+
 @api.route("/api/backtest", methods=["POST"])
 def api_backtest() -> Response:
     with db_session() as session:
@@ -1358,9 +1442,9 @@ def api_backtest() -> Response:
         if not upload or upload.filename == "":
             return json_error("No CSV file uploaded.", 400)
 
-        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
-        csv_path = Path(tmp_file.name)
-        tmp_file.close()
+        BACKTEST_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        csv_filename = f"{secrets.token_urlsafe(12)}.csv"
+        csv_path = BACKTEST_UPLOAD_DIR / csv_filename
         upload.save(csv_path)
 
         error = validate_candles(csv_path)
@@ -1395,14 +1479,15 @@ def api_backtest() -> Response:
             model or overrides.get("MODEL_MODE"),
             starting_balance=overrides.get("ACCOUNT_BALANCE_OVERRIDE"),
             settings_json=json.dumps(user_config),
+            csv_path=csv_path,
         )
-
-        thread = threading.Thread(
-            target=run_backtest_job,
-            args=(job_id, csv_path, overrides),
-            daemon=True,
-        )
-        thread.start()
+        if not BACKTEST_WORKER_ENABLED:
+            thread = threading.Thread(
+                target=run_backtest_job,
+                args=(job_id, csv_path, overrides),
+                daemon=True,
+            )
+            thread.start()
 
         return json_response(
             {"job_id": job_id, "status": "pending", "model_mode": overrides.get("MODEL_MODE")},

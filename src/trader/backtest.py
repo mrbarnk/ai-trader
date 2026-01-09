@@ -538,17 +538,24 @@ def build_series(candles: list[Candle], timeframe: int) -> TimeframeSeries:
 
 
 def trade_identity(record: dict) -> tuple:
-    def round_price(value: float | None) -> float | None:
+    def normalize_price(value: float | str | None) -> float | None:
         if value is None:
             return None
-        return round(float(value), 5)
+        if isinstance(value, str) and value.strip().lower() in {"", "n/a"}:
+            return None
+        try:
+            return round(float(value), 5)
+        except (TypeError, ValueError):
+            return None
 
+    direction = str(record.get("direction") or "").upper() or None
     return (
-        record.get("direction"),
-        round_price(record.get("entry")),
-        round_price(record.get("stop_loss")),
-        round_price(record.get("tp1_price")),
-        round_price(record.get("tp2_price")),
+        direction,
+        normalize_price(record.get("entry")),
+        normalize_price(record.get("stop_loss")),
+        normalize_price(record.get("tp1_price")),
+        normalize_price(record.get("tp2_price")),
+        normalize_price(record.get("tp3_price")),
     )
 
 
@@ -640,6 +647,8 @@ def run_backtest(
     
     # Track open trades
     open_trades = []
+    pending_trades = []
+    pending_trade_keys: set[tuple] = set()
     seen_trade_keys: set[tuple] = set()
     
     total_steps = max(len(step_candles) - 1, 1)
@@ -692,6 +701,30 @@ def run_backtest(
                 # Skip ALL activity for rest of day
                 continue
         
+        # ✅ Move pending trades to open after entry fills
+        activated_indices = []
+        for idx, trade_data in enumerate(pending_trades):
+            pending_from = trade_data.get("pending_from_time")
+            if isinstance(pending_from, datetime):
+                close_time = candle.time_utc + timedelta(seconds=step_seconds)
+                if close_time < pending_from:
+                    continue
+            direction = trade_data.get("direction")
+            entry_price = trade_data.get("entry")
+            if direction not in ("BUY", "SELL") or entry_price is None:
+                continue
+            if check_entry_fill(candle, entry_price, entry_price, direction):
+                trade_data["entry_filled_time"] = candle.time_utc
+                trade_key = trade_data.get("trade_key") or trade_identity(trade_data)
+                if trade_key:
+                    pending_trade_keys.discard(trade_key)
+                    seen_trade_keys.add(trade_key)
+                open_trades.append(trade_data)
+                activated_indices.append(idx)
+
+        for idx in reversed(activated_indices):
+            pending_trades.pop(idx)
+
         # ✅ Process existing open trades
         closed_indices = []
         for idx, trade_data in enumerate(open_trades):
@@ -793,7 +826,7 @@ def run_backtest(
                     "tp2_price": signal.tp2_price,
                 }
             )
-            if signal_key in seen_trade_keys:
+            if signal_key in seen_trade_keys or signal_key in pending_trade_keys:
                 continue
             if any(trade_identity(trade) == signal_key for trade in open_trades):
                 continue
@@ -806,15 +839,13 @@ def run_backtest(
                 risk_percent=1.0  # Risk 1% per trade
             )
 
-            record = build_outcome_record(
-                signal=signal,
-                series=series,
-                entry_timeframe=step_timeframe,
-            )
+            record = asdict(signal)
             record['balance_before'] = current_balance
             record['position_size_lots'] = position_size  # ✅ Store calculated size
-            open_trades.append(record)
-            seen_trade_keys.add(signal_key)
+            record['pending_from_time'] = now_utc
+            record['trade_key'] = signal_key
+            pending_trades.append(record)
+            pending_trade_keys.add(signal_key)
         else:
             logger.log(signal)
     

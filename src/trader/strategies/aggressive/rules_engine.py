@@ -461,9 +461,6 @@ class SignalEngine:
             tp3_price = self._leg_target_price(direction, tp3_leg, config.TP3_LEG_PERCENT)
             if tp3_price is None:
                 return fail("STEP_8_TP3_INVALID")
-            tp3_price = self._normalize_tp_price(
-                direction, entry_price, tp3_leg, tp3_price, config.TP3_LEG_PERCENT
-            )
             tp3_price = self._round_price(tp3_price)
             rules_passed.append("STEP_8_TP3_DEFINED")
 
@@ -848,54 +845,6 @@ class SignalEngine:
             return leg.high - (leg.range * percent)
         return leg.low + (leg.range * percent)
 
-    def _normalize_tp_targets(
-        self,
-        direction: BiasDirection,
-        entry_price: float,
-        leg: ActiveLeg,
-        tp1: float,
-        tp2: float,
-    ) -> tuple[float, float]:
-        if direction == "BUY":
-            if tp1 > entry_price and tp2 > entry_price:
-                return tp1, tp2
-            distance = leg.high - entry_price
-            if distance <= 0:
-                distance = leg.range
-            tp1 = entry_price + (distance * config.TP1_LEG_PERCENT)
-            tp2 = entry_price + (distance * config.TP2_LEG_PERCENT)
-            return tp1, tp2
-        if tp1 < entry_price and tp2 < entry_price:
-            return tp1, tp2
-        distance = entry_price - leg.low
-        if distance <= 0:
-            distance = leg.range
-        tp1 = entry_price - (distance * config.TP1_LEG_PERCENT)
-        tp2 = entry_price - (distance * config.TP2_LEG_PERCENT)
-        return tp1, tp2
-
-    def _normalize_tp_price(
-        self,
-        direction: BiasDirection,
-        entry_price: float,
-        leg: ActiveLeg,
-        tp_price: float,
-        percent: float,
-    ) -> float:
-        if direction == "BUY":
-            if tp_price > entry_price:
-                return tp_price
-            distance = leg.high - entry_price
-            if distance <= 0:
-                distance = leg.range
-            return entry_price + (distance * percent)
-        if tp_price < entry_price:
-            return tp_price
-        distance = entry_price - leg.low
-        if distance <= 0:
-            distance = leg.range
-        return entry_price - (distance * percent)
-
     def _validate_take_profit_plan(
         self, direction: BiasDirection, entry_price: float, active_leg: ActiveLeg
     ) -> tuple[str, float, float] | None:
@@ -914,8 +863,7 @@ class SignalEngine:
             tp2 = active_leg.low + (leg_range * config.TP2_LEG_PERCENT)
             # if not (entry_price < tp1 < tp2):
             # return None
-        tp1, tp2 = self._normalize_tp_targets(direction, entry_price, active_leg, tp1, tp2)
-        return "PLAN_A", self._round_price(tp1), self._round_price(tp2)
+        return "PLAN_A", tp1, tp2  # Return regardless
 
         # return "PLAN_A", self._round_price(tp1), self._round_price(tp2)
 

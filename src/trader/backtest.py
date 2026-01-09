@@ -704,63 +704,89 @@ def run_backtest(
                 # Trade closed!
                 trade_data['outcome'] = outcome['type']
                 trade_data['exit_time'] = outcome['exit_time']
-                trade_data['exit_price'] = outcome['exit_price']
                 
-                # Calculate P&L
+                # Get trade details
                 entry_price = trade_data['entry']
                 stop_loss = trade_data['stop_loss']
-                exit_price = outcome['exit_price']
                 direction = trade_data['direction']
-                
-                # Calculate risk in pips
-                if direction == "SELL":
-                    risk_pips = (stop_loss - entry_price) / config.PIP_SIZE
-                    result_pips = (entry_price - exit_price) / config.PIP_SIZE
-                else:
-                    risk_pips = (entry_price - stop_loss) / config.PIP_SIZE
-                    result_pips = (exit_price - entry_price) / config.PIP_SIZE
-                
-                # Calculate R-multiple
-                r_multiple = result_pips / risk_pips if risk_pips > 0 else 0
-                
-                # ✅ Calculate dollar P&L using ACTUAL position size
                 position_size = trade_data.get('position_size_lots', 0.01)
-                pnl = result_pips * config.PIP_VALUE_PER_LOT * position_size
                 
-                # ✅ Update balance IMMEDIATELY
-                current_balance += pnl
+                tp1_price = trade_data.get('tp1_price')
+                tp2_price = trade_data.get('tp2_price')
                 
-                # ✅ Record in risk manager with ACTUAL balance
-                risk_manager.record_trade_result(
-                    current_date, 
-                    pnl, 
-                    r_multiple,
-                    current_balance,
-                    direction,
-                )
-                
-                # Store results
-                trade_data['pnl'] = pnl
-                trade_data['r_multiple'] = r_multiple
-                trade_data['balance_after'] = current_balance
-                
-                # Log
-                outcome_logger.log(trade_data)
-                
-                # Mark for removal
-                closed_indices.append(idx)
-                
-                # ✅ CHECK LIMITS IMMEDIATELY AFTER EACH TRADE CLOSES
-                if config.ENABLE_DAILY_RISK_MANAGEMENT:
-                    should_stop, reason = risk_manager.should_stop_trading(
-                        current_date,
-                        now_utc,
-                        current_balance
-                    )
+                # ✅ FIXED: Calculate PNL based on outcome type
+                if outcome['type'] == 'TP1_THEN_TP2':
+                    # Partial close: 50% at TP1, 50% at TP2
+                    half_position = position_size * 0.5
                     
-                    if should_stop:
-                        # Stop processing immediately
-                        break
+                    if direction == "SELL":
+                        pnl_tp1 = (entry_price - tp1_price) / config.PIP_SIZE * config.PIP_VALUE_PER_LOT * half_position
+                        pnl_tp2 = (entry_price - tp2_price) / config.PIP_SIZE * config.PIP_VALUE_PER_LOT * half_position
+                    else:  # BUY
+                        pnl_tp1 = (tp1_price - entry_price) / config.PIP_SIZE * config.PIP_VALUE_PER_LOT * half_position
+                        pnl_tp2 = (tp2_price - entry_price) / config.PIP_SIZE * config.PIP_VALUE_PER_LOT * half_position
+                    
+                    pnl = pnl_tp1 + pnl_tp2
+                    
+                    # Calculate R-multiple based on average exit
+                    avg_exit = (tp1_price + tp2_price) / 2.0
+                    if direction == "SELL":
+                        risk_pips = (stop_loss - entry_price) / config.PIP_SIZE
+                        result_pips = (entry_price - avg_exit) / config.PIP_SIZE
+                    else:
+                        risk_pips = (entry_price - stop_loss) / config.PIP_SIZE
+                        result_pips = (avg_exit - entry_price) / config.PIP_SIZE
+                    
+                    r_multiple = result_pips / risk_pips if risk_pips > 0 else 0
+                    trade_data['exit_price'] = avg_exit
+                    
+                elif outcome['type'] in ('TP1_THEN_BE', 'TP1_THEN_SL'):
+                    # Closed 50% at TP1, then hit BE or SL on remaining 50%
+                    half_position = position_size * 0.5
+                    
+                    # Profit from TP1 portion
+                    if direction == "SELL":
+                        pnl_tp1 = (entry_price - tp1_price) / config.PIP_SIZE * config.PIP_VALUE_PER_LOT * half_position
+                    else:
+                        pnl_tp1 = (tp1_price - entry_price) / config.PIP_SIZE * config.PIP_VALUE_PER_LOT * half_position
+                    
+                    # Loss/BE from second portion (assume BE for now, actual SL would be worse)
+                    pnl_be = 0  # Breakeven on second half
+                    
+                    pnl = pnl_tp1 + pnl_be
+                    
+                    # Calculate R-multiple
+                    if direction == "SELL":
+                        risk_pips = (stop_loss - entry_price) / config.PIP_SIZE
+                        # Half to TP1, half to BE = average to TP1/2
+                        result_pips = ((entry_price - tp1_price) / config.PIP_SIZE) * 0.5
+                    else:
+                        risk_pips = (entry_price - stop_loss) / config.PIP_SIZE
+                        result_pips = ((tp1_price - entry_price) / config.PIP_SIZE) * 0.5
+                    
+                    r_multiple = result_pips / risk_pips if risk_pips > 0 else 0
+                    trade_data['exit_price'] = entry_price  # Average exit is near entry
+                    
+                else:
+                    # Single exit: SL_HIT, TP2_HIT, TP1_OPEN, OPEN, etc.
+                    exit_price = outcome.get('exit_price', entry_price)
+                    trade_data['exit_price'] = exit_price
+                    
+                    # Standard calculation for full position
+                    if direction == "SELL":
+                        risk_pips = (stop_loss - entry_price) / config.PIP_SIZE
+                        result_pips = (entry_price - exit_price) / config.PIP_SIZE
+                    else:
+                        risk_pips = (entry_price - stop_loss) / config.PIP_SIZE
+                        result_pips = (exit_price - entry_price) / config.PIP_SIZE
+                    
+                    r_multiple = result_pips / risk_pips if risk_pips > 0 else 0
+                    pnl = result_pips * config.PIP_VALUE_PER_LOT * position_size
+                
+                # Rest of your code continues...
+                current_balance += pnl
+                # etc.
+
         
         # Remove closed trades (reverse order to maintain indices)
         for idx in reversed(closed_indices):

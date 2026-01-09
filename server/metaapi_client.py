@@ -103,9 +103,15 @@ class MetaApiClient:
                 raise MetaApiError(
                     "MetaApi SDK call attempted inside a running event loop."
                 ) from exc
-            raise MetaApiError(f"MetaApi SDK error: {exc}") from exc
+            raise MetaApiError(self._format_error("MetaApi SDK error", exc)) from exc
         except Exception as exc:
-            raise MetaApiError(f"MetaApi SDK error: {exc}") from exc
+            raise MetaApiError(self._format_error("MetaApi SDK error", exc)) from exc
+
+    def _format_error(self, prefix: str, exc: Exception) -> str:
+        details = getattr(exc, "details", None)
+        if details:
+            return f"{prefix}: {exc}. Details: {details}"
+        return f"{prefix}: {exc}"
 
     async def _with_metaapi(self, fn):
         if MetaApi is None:
@@ -130,6 +136,29 @@ class MetaApiClient:
             except Exception:
                 pass
             connection = account.get_rpc_connection()
+            await connection.connect()
+            await connection.wait_synchronized()
+            try:
+                return await fn(connection, account)
+            finally:
+                await _safe_close(connection)
+
+        return await self._with_metaapi(_execute)
+
+    async def _with_streaming_connection(self, account_id: str, fn):
+        async def _execute(metaapi):
+            account_api = metaapi.metatrader_account_api
+            account = await account_api.get_account(account_id)
+            try:
+                if getattr(account, "state", "") != "DEPLOYED":
+                    await account.deploy()
+            except Exception:
+                pass
+            try:
+                await account.wait_connected()
+            except Exception:
+                pass
+            connection = account.get_streaming_connection()
             await connection.connect()
             await connection.wait_synchronized()
             try:
@@ -279,7 +308,16 @@ class MetaApiClient:
 
             raise MetaApiError(f"Unsupported MetaApi actionType: {action_type or 'n/a'}.")
 
-        return self._run(self._with_rpc_connection(account_id, _call))
+        try:
+            return self._run(self._with_streaming_connection(account_id, _call))
+        except MetaApiError as exc:
+            last_error = exc
+        try:
+            return self._run(self._with_rpc_connection(account_id, _call))
+        except MetaApiError as exc:
+            raise MetaApiError(
+                f"MetaApi streaming order failed: {last_error}. RPC failed: {exc}."
+            ) from exc
 
     def get_positions(self, account_id: str) -> list[dict[str, Any]]:
         async def _call(connection, _account):
@@ -292,10 +330,24 @@ class MetaApiClient:
 
     def get_symbol_price(self, account_id: str, symbol: str) -> dict[str, Any]:
         async def _call(connection, _account):
+            subscribe = getattr(connection, "subscribe_to_market_data", None)
+            if callable(subscribe):
+                result = subscribe(str(symbol).upper())
+                if asyncio.iscoroutine(result):
+                    await result
             data = await connection.get_symbol_price(str(symbol), keep_subscription=False)
             return _ensure_dict(data)
 
-        return self._run(self._with_rpc_connection(account_id, _call))
+        try:
+            return self._run(self._with_streaming_connection(account_id, _call))
+        except MetaApiError as exc:
+            last_error = exc
+        try:
+            return self._run(self._with_rpc_connection(account_id, _call))
+        except MetaApiError as exc:
+            raise MetaApiError(
+                f"MetaApi streaming price failed: {last_error}. RPC failed: {exc}."
+            ) from exc
 
     def close_position(
         self, account_id: str, position_id: str, volume: float | None

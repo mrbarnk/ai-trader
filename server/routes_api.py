@@ -712,14 +712,25 @@ def api_accounts_connect() -> Response:
             if not token:
                 return json_error("MetaApi token missing.", 400)
             client = MetaApiClient(token, region=account.metaapi_region)
-            payload = data.get("metaapi_payload") or {
-                "name": f"{user.email}-{account.account_number}",
-                "type": "cloud",
-                "login": account.account_number,
-                "password": data.get("password"),
-                "server": account.server,
-                "platform": account.platform,
-            }
+            platform = str(account.platform or "").strip().lower()
+            if platform not in {"mt4", "mt5"}:
+                if "5" in platform:
+                    platform = "mt5"
+                elif "4" in platform:
+                    platform = "mt4"
+            payload = data.get("metaapi_payload")
+            if not payload:
+                payload = {
+                    "name": f"{user.email}-{account.account_number}",
+                    "type": str(data.get("metaapi_type") or "cloud-g2").strip(),
+                    "login": account.account_number,
+                    "password": data.get("password"),
+                    "server": account.server,
+                    "platform": platform or account.platform,
+                    "region": account.metaapi_region,
+                    "provisioningProfileId": data.get("provisioning_profile_id"),
+                }
+                payload = {key: value for key, value in payload.items() if value not in (None, "")}
             try:
                 response = client.create_account(payload)
                 account_id = (

@@ -851,22 +851,40 @@ class SignalEngine:
         leg_range = active_leg.high - active_leg.low
         if leg_range <= 0:
             return None
+        
         if not (0 < config.TP1_LEG_PERCENT < 1 and 0 < config.TP2_LEG_PERCENT < 1):
             return None
+        
+        # ✅ FIX: Ensure TP2 represents MORE profit than TP1
+        if config.TP2_LEG_PERCENT <= config.TP1_LEG_PERCENT:
+            return None
+        
         if direction == "SELL":
             tp1 = active_leg.high - (leg_range * config.TP1_LEG_PERCENT)
             tp2 = active_leg.high - (leg_range * config.TP2_LEG_PERCENT)
-            # if not (entry_price > tp1 > tp2):
-            # return None
-        else:
+            
+            # ✅ FIX: Validate TPs are below entry (profit zone)
+            if tp1 >= entry_price or tp2 >= entry_price:
+                return None
+            
+            # ✅ FIX: Validate TP2 is lower than TP1 (more profit for SELL)
+            if tp2 >= tp1:
+                return None
+        
+        else:  # BUY
             tp1 = active_leg.low + (leg_range * config.TP1_LEG_PERCENT)
             tp2 = active_leg.low + (leg_range * config.TP2_LEG_PERCENT)
-            # if not (entry_price < tp1 < tp2):
-            # return None
-        return "PLAN_A", tp1, tp2  # Return regardless
-
-        # return "PLAN_A", self._round_price(tp1), self._round_price(tp2)
-
+            
+            # ✅ FIX: Validate TPs are above entry (profit zone)
+            if tp1 <= entry_price or tp2 <= entry_price:
+                return None
+            
+            # ✅ FIX: Validate TP2 is higher than TP1 (more profit for BUY)
+            if tp2 <= tp1:
+                return None
+        
+        # ✅ FIX: Round before returning
+        return "PLAN_A", self._round_price(tp1), self._round_price(tp2)``
     def _build_output(
         self,
         decision: str,

@@ -720,6 +720,13 @@ def api_accounts_connect() -> Response:
                     platform = "mt4"
             payload = data.get("metaapi_payload")
             if not payload:
+                magic_value = data.get("magic")
+                if magic_value is None:
+                    magic_value = account.magic_number
+                try:
+                    magic_value = int(magic_value) if magic_value is not None else 0
+                except (TypeError, ValueError):
+                    magic_value = 0
                 payload = {
                     "name": f"{user.email}-{account.account_number}",
                     "type": str(data.get("metaapi_type") or "cloud-g2").strip(),
@@ -729,6 +736,7 @@ def api_accounts_connect() -> Response:
                     "platform": platform or account.platform,
                     "region": account.metaapi_region,
                     "provisioningProfileId": data.get("provisioning_profile_id"),
+                    "magic": magic_value,
                 }
                 payload = {key: value for key, value in payload.items() if value not in (None, "")}
             try:

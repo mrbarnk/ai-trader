@@ -884,7 +884,7 @@ class SignalEngine:
                 return None
         
         # ✅ FIX: Round before returning
-        return "PLAN_A", self._round_price(tp1), self._round_price(tp2)``
+        return "PLAN_A", self._round_price(tp1), self._round_price(tp2)
     def _build_output(
         self,
         decision: str,

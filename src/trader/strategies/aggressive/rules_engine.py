@@ -846,45 +846,74 @@ class SignalEngine:
         return leg.low + (leg.range * percent)
 
     def _validate_take_profit_plan(
-        self, direction: BiasDirection, entry_price: float, active_leg: ActiveLeg
+        self, 
+        direction: BiasDirection, 
+        entry_price: float, 
+        tp_leg: ActiveLeg
     ) -> tuple[str, float, float] | None:
-        leg_range = active_leg.high - active_leg.low
-        if leg_range <= 0:
+        """
+        Calculate TPs as percentages of distance from entry to target
+        
+        For SELL:
+            - Target = tp_leg.end_price (the low)
+            - Distance = entry_price - target
+            - TP1 = entry - (distance * TP1_PERCENT)
+        
+        For BUY:
+            - Target = tp_leg.end_price (the high)
+            - Distance = target - entry_price
+            - TP1 = entry + (distance * TP1_PERCENT)
+        """
+        
+        if not (0 < config.TP1_LEG_PERCENT <= 2.0 and 0 < config.TP2_LEG_PERCENT <= 2.0):
             return None
         
-        if not (0 < config.TP1_LEG_PERCENT < 1 and 0 < config.TP2_LEG_PERCENT < 1):
-            return None
-        
-        # ✅ FIX: Ensure TP2 represents MORE profit than TP1
+        # ✅ Ensure TP2 is MORE profit than TP1
         if config.TP2_LEG_PERCENT <= config.TP1_LEG_PERCENT:
             return None
         
         if direction == "SELL":
-            tp1 = active_leg.high - (leg_range * config.TP1_LEG_PERCENT)
-            tp2 = active_leg.high - (leg_range * config.TP2_LEG_PERCENT)
+            target = tp_leg.end_price  # The low we're targeting
+            distance_to_target = entry_price - target
             
-            # ✅ FIX: Validate TPs are below entry (profit zone)
+            # Validate we're entering ABOVE the target
+            if distance_to_target <= 0:
+                return None
+            
+            # Calculate TPs as % of distance to target
+            tp1 = entry_price - (distance_to_target * config.TP1_LEG_PERCENT)
+            tp2 = entry_price - (distance_to_target * config.TP2_LEG_PERCENT)
+            
+            # Validate TPs are below entry (profit zone)
             if tp1 >= entry_price or tp2 >= entry_price:
                 return None
             
-            # ✅ FIX: Validate TP2 is lower than TP1 (more profit for SELL)
+            # Validate TP2 is MORE profit (lower) than TP1
             if tp2 >= tp1:
                 return None
         
         else:  # BUY
-            tp1 = active_leg.low + (leg_range * config.TP1_LEG_PERCENT)
-            tp2 = active_leg.low + (leg_range * config.TP2_LEG_PERCENT)
+            target = tp_leg.end_price  # The high we're targeting
+            distance_to_target = target - entry_price
             
-            # ✅ FIX: Validate TPs are above entry (profit zone)
+            # Validate we're entering BELOW the target
+            if distance_to_target <= 0:
+                return None
+            
+            # Calculate TPs as % of distance to target
+            tp1 = entry_price + (distance_to_target * config.TP1_LEG_PERCENT)
+            tp2 = entry_price + (distance_to_target * config.TP2_LEG_PERCENT)
+            
+            # Validate TPs are above entry (profit zone)
             if tp1 <= entry_price or tp2 <= entry_price:
                 return None
             
-            # ✅ FIX: Validate TP2 is higher than TP1 (more profit for BUY)
+            # Validate TP2 is MORE profit (higher) than TP1
             if tp2 <= tp1:
                 return None
         
-        # ✅ FIX: Round before returning
         return "PLAN_A", self._round_price(tp1), self._round_price(tp2)
+        
     def _build_output(
         self,
         decision: str,

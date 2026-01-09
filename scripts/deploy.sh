@@ -88,6 +88,8 @@ User=$SERVICE_USER
 Group=$SERVICE_GROUP
 WorkingDirectory=$APP_DIR
 EnvironmentFile=-$ENV_FILE
+Environment="REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt"
+Environment="SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
 ExecStart=$exec_start
 Restart=always
 RestartSec=3
@@ -105,6 +107,8 @@ After=network.target
 [Service]
 WorkingDirectory=$APP_DIR
 EnvironmentFile=-$ENV_FILE
+Environment="REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt"
+Environment="SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
 ExecStart=$exec_start
 Restart=always
 RestartSec=3

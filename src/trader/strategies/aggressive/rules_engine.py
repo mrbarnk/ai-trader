@@ -10,7 +10,6 @@ from ...models import Candle
 from ...structure import BreakEvent, BreakDirection, find_breaks, find_swings, has_liquidity_sweep
 from ...time_utils import session_from_utc
 from ...timeframes import TIMEFRAME_H4, TIMEFRAME_M15, TIMEFRAME_M5, TIMEFRAME_M1, TIMEFRAME_D1
-from .enhanced_order_blocks import EnhancedOrderBlockDetector, EnhancedOrderBlock, OrderBlockQuality
 
 
 BiasDirection = Literal["BUY", "SELL"]
@@ -260,46 +259,38 @@ class SignalEngine:
         events_15m = find_breaks(candles_15m, swings_15m)
         desired_dir = "bear" if direction == "SELL" else "bull"
 
-
-        # Enhanced order block detection
-        detector = EnhancedOrderBlockDetector()
-        enhanced_obs = detector.find_all_order_blocks(
-            candles=candles_15m,
-            events=events_15m,
-            direction=direction,
-            active_leg=active_leg,
-            current_time=now_utc,
-            lookback_hours=72
-        )
-        current_price = candles_5m[-1].close
-        max_distance_pips = 150  # Only keep OBs within 150 pips
-
-        relevant_enhanced_obs = []
-        for eob in enhanced_obs:
-            distance_to_ob = min(abs(current_price - eob.high), abs(current_price - eob.low)) / config.PIP_SIZE
-            if distance_to_ob <= max_distance_pips:
-                relevant_enhanced_obs.append(eob)
-                
-        # Convert to your OrderBlock format and add to state
-        new_count = 0
-        for eob in relevant_enhanced_obs:
+        # Build/refresh 15M OBs in the active 4H leg
+        for event in events_15m:
+            if event.time_utc < active_leg.start_time:
+                continue
+            if event.direction != desired_dir:
+                continue
+            if event.event_type not in ("CHoCH", "BOS"):
+                continue
+            structure_pos = active_leg.position(event.close_price)
+            if structure_pos is None:
+                continue
+            ob_zone = self._find_order_block(candles_15m, event, direction)
+            if not ob_zone:
+                continue
             ob_exists = any(
-                abs(existing.created_time.timestamp() - eob.created_time.timestamp()) < 60
-                for existing in self.state.active_order_blocks
+                abs(ob.created_time.timestamp() - event.time_utc.timestamp()) < 1
+                for ob in self.state.active_order_blocks
             )
-            if not ob_exists:
-                self.state.active_order_blocks.append(OrderBlock(
-                    high=eob.high,
-                    low=eob.low,
-                    created_time=eob.created_time,
-                    direction=eob.direction,
-                    target_price=eob.target_price,
-                    traded=False
-                ))
-                new_count += 1
-        
-        if new_count > 0:
-            rules_passed.append(f"STEP_4_ENHANCED_OB_CREATED_{new_count}")
+            if ob_exists:
+                continue
+            ob_high, ob_low = ob_zone
+            self.state.active_order_blocks.append(
+                OrderBlock(
+                    high=ob_high,
+                    low=ob_low,
+                    created_time=event.time_utc,
+                    direction=direction,
+                    target_price=event.break_level,
+                    traded=False,
+                )
+            )
+            rules_passed.append("STEP_4_15M_OB_CREATED")
 
         active_ob, ob_touch_time = self._find_touched_ob(
             candles_5m, self.state.active_order_blocks, direction, active_leg.start_time
@@ -371,7 +362,7 @@ class SignalEngine:
             return fail("STEP_6_ENTRY_BREAK_LEVEL_MISSING")
         if not self._body_breaks_level(entry_candle, desired_dir, entry_event.break_level):
             return fail("STEP_6_ENTRY_BODY_NOT_STRONG")
-        entry_price = self._round_price(entry_event.break_level)
+        entry_price = self._round_price(entry_candle.close)
 
         # STEP 7 — STOP LOSS VALIDITY CHECK
         sl_buffer = config.SL_EXTRA_PIPS * config.PIP_SIZE
@@ -401,40 +392,24 @@ class SignalEngine:
             rules_passed.append("STEP_7_RISK_SIZING_OK")
 
         # STEP 8 — TAKE PROFIT PLAN CHECK
+        target_price = active_ob.target_price
+        if target_price is None:
+            return fail("STEP_8_TP_TARGET_MISSING")
+        tp1_price = self._round_price(target_price)
+        if direction == "SELL":
+            if tp1_price >= entry_price:
+                return fail("STEP_8_TP_TARGET_INVALID")
+        else:
+            if tp1_price <= entry_price:
+                return fail("STEP_8_TP_TARGET_INVALID")
+        tp2_price = tp1_price
+        plan_name = "STRUCTURE"
+        rules_passed.append("STEP_8_TP_PLAN_DEFINED")
+
         structure_event = next(
             (event for event in events_15m if event.time_utc == active_ob.created_time),
             None,
         )
-        if config.TP_LEG_SOURCE == "15M":
-            target_price = active_ob.target_price
-            if target_price is None:
-                return fail("STEP_8_TP_TARGET_MISSING")
-            tp1_price = self._round_price(target_price)
-            if direction == "SELL":
-                if tp1_price >= entry_price:
-                    return fail("STEP_8_TP_TARGET_INVALID")
-            else:
-                if tp1_price <= entry_price:
-                    return fail("STEP_8_TP_TARGET_INVALID")
-            tp2_price = tp1_price
-            plan_name = "STRUCTURE"
-            rules_passed.append("STEP_8_TP_PLAN_DEFINED")
-        else:
-            tp_leg = self._resolve_tp_leg(active_leg, structure_event, candles_15m, direction)
-            if tp_leg is None:
-                if config.TP_LEG_FALLBACK_TO_4H:
-                    tp_leg = active_leg
-                    rules_passed.append("STEP_8_TP_LEG_FALLBACK_4H")
-                else:
-                    return fail("STEP_8_TP_LEG_MISSING")
-
-            take_profit_plan = self._validate_take_profit_plan(
-                direction, entry_price, tp_leg
-            )
-            if take_profit_plan is None:
-                return fail("STEP_8_TP_PLAN_MISSING")
-            plan_name, tp1_price, tp2_price = take_profit_plan
-            rules_passed.append("STEP_8_TP_PLAN_DEFINED")
         if config.TP3_ENABLED:
             tp3_leg = self._resolve_tp3_leg(
                 active_leg, structure_event, candles_15m, candles_d1, direction
@@ -454,8 +429,8 @@ class SignalEngine:
         # STEP 9 — FINAL CONSISTENCY CHECK
         rules_passed.append("STEP_9_FINAL_CONSISTENCY")
 
-        # Mark this OB as traded after a signal fires.
-        active_ob.traded = True
+        # ✅ Mark this OB as traded (allow retest later if price returns)
+        # active_ob.traded = True
 
         return self._build_output(
             decision="TRADE",
@@ -478,101 +453,40 @@ class SignalEngine:
             rules_failed=rules_failed,
         )
 
-    def _find_touched_ob(
+    def _find_order_block(
         self,
         candles: list[Candle],
-        order_blocks: list[OrderBlock],
-        direction: BiasDirection,
-        after_time: datetime,
-    ) -> tuple[OrderBlock | None, datetime | None]:
+        break_event: BreakEvent,
+        direction: BiasDirection
+    ) -> tuple[float, float] | None:
         """
-        NUCLEAR FIX: Extremely aggressive order block touching that always finds something
+        Find the Order Block (last opposite candle before break)
+        
+        For SELL: Find last BULLISH candle before bearish CHoCH
+        For BUY: Find last BEARISH candle before bullish CHoCH
+        
+        Returns: (ob_high, ob_low) or None
         """
+        if break_event.index == 0:
+            return None
         
-        if not order_blocks or not candles:
-            print("🚨 No order blocks or candles available")
-            return None, None
+        # Look backwards from the break candle
+        break_index = break_event.index
         
-        current_price = candles[-1].close
+        if direction == "SELL":
+            # Find last bullish candle (close > open)
+            for i in range(break_index - 1, max(0, break_index - 10), -1):
+                candle = candles[i]
+                if candle.close > candle.open:  # Bullish candle
+                    return (candle.high, candle.low)
+        else:
+            # Find last bearish candle (close < open)
+            for i in range(break_index - 1, max(0, break_index - 10), -1):
+                candle = candles[i]
+                if candle.close < candle.open:  # Bearish candle
+                    return (candle.high, candle.low)
         
-        # Find relevant order blocks
-        relevant_obs = [ob for ob in order_blocks if ob.direction == direction and not ob.traded]
-        
-        print(f"\n🔍 OB TOUCHING DEBUG:")
-        print(f"Direction: {direction}, Current price: {current_price:.5f}")
-        print(f"Total OBs: {len(order_blocks)}, Relevant: {len(relevant_obs)}")
-        
-        if not relevant_obs:
-            print("❌ No relevant order blocks found!")
-            return None, None
-        
-        # Show distances to all relevant OBs
-        for i, ob in enumerate(relevant_obs):
-            distance_high = abs(current_price - ob.high) / config.PIP_SIZE
-            distance_low = abs(current_price - ob.low) / config.PIP_SIZE
-            min_distance = min(distance_high, distance_low)
-            print(f"  OB {i}: {ob.low:.5f}-{ob.high:.5f}, distance: {min_distance:.1f} pips")
-        
-        # Strategy 1: Try with VERY generous tolerance levels
-        tolerance_levels = [10.0, 25.0, 50.0, 100.0, 200.0]  # Up to 200 pips!
-        
-        for tolerance in tolerance_levels:
-            print(f"🔍 Trying tolerance: {tolerance} pips")
-            
-            for ob in reversed(relevant_obs):  # Most recent first
-                # Look for touches with current tolerance
-                for candle in candles:
-                    if candle.time_utc < max(after_time, ob.created_time):
-                        continue
-                        
-                    if self._candle_touches_ob(candle, ob, tolerance):
-                        distance = min(
-                            abs(candle.close - ob.high),
-                            abs(candle.close - ob.low)
-                        ) / config.PIP_SIZE
-                        print(f"✅ OB TOUCHED! Tolerance: {tolerance} pips, Distance: {distance:.1f} pips")
-                        return ob, candle.time_utc
-        
-        # Strategy 2: If STILL no touches, just pick the closest OB and pretend it was touched
-        print("🚨 No OB touched even with 200 pip tolerance - using emergency fallback")
-        
-        # Find closest OB to current price
-        closest_ob = None
-        closest_distance = float('inf')
-        
-        for ob in relevant_obs:
-            distance = min(
-                abs(current_price - ob.high),
-                abs(current_price - ob.low)
-            ) / config.PIP_SIZE
-            
-            if distance < closest_distance:
-                closest_distance = distance
-                closest_ob = ob
-        
-        if closest_ob:
-            print(f"✅ EMERGENCY: Using closest OB at {closest_distance:.1f} pips distance")
-            # Return the most recent candle time as the "touch" time
-            return closest_ob, candles[-1].time_utc
-        
-        # Strategy 3: Nuclear option - create an emergency OB right at current price
-        print("🚨 NUCLEAR OPTION: Creating emergency OB at current price")
-        
-        emergency_ob = OrderBlock(
-            high=current_price + (2 * config.PIP_SIZE),  # 2 pips above
-            low=current_price - (2 * config.PIP_SIZE),   # 2 pips below
-            created_time=candles[-1].time_utc,
-            direction=direction,
-            target_price=current_price,
-            traded=False
-        )
-        
-        # Add to active order blocks
-        self.state.active_order_blocks.append(emergency_ob)
-        
-        print(f"✅ EMERGENCY OB CREATED at {current_price:.5f}")
-        return emergency_ob, candles[-1].time_utc
-
+        return None
 
     def _is_price_in_ob(
         self,
@@ -591,23 +505,12 @@ class SignalEngine:
         
         return ob_low <= price <= ob_high
 
-
-    # ALSO - Make the touching even more generous:
     def _candle_touches_ob(
-        self, candle: Candle, ob: OrderBlock, tolerance_pips: float = 25.0  # VERY generous default
+        self, candle: Candle, ob: OrderBlock, tolerance_pips: float = 1.0
     ) -> bool:
-        """Super generous order block touching"""
         tolerance = tolerance_pips * config.PIP_SIZE
-        
-        # Very generous overlap check
-        candle_low = candle.low - tolerance
-        candle_high = candle.high + tolerance
-        ob_low = ob.low - tolerance  
-        ob_high = ob.high + tolerance
-        
-        # If there's ANY overlap at all, consider it touched
-        return not (candle_high < ob_low or candle_low > ob_high)
-        
+        return candle.low <= ob.high + tolerance and candle.high >= ob.low - tolerance
+
     def _find_touched_ob(
         self,
         candles: list[Candle],

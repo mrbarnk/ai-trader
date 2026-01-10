@@ -224,6 +224,16 @@ class DailyRiskManager:
     
     def get_daily_summary(self) -> str:
         """Generate human-readable summary report"""
+        if not self.daily_stats:
+            return "\n".join(
+                [
+                    "\n" + "=" * 100,
+                    "DAILY RISK MANAGEMENT SUMMARY",
+                    "=" * 100,
+                    "No trading days recorded.",
+                    "=" * 100 + "\n",
+                ]
+            )
         lines = ["\n" + "="*100]
         lines.append("DAILY RISK MANAGEMENT SUMMARY")
         lines.append("="*100)

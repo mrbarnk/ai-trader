@@ -139,3 +139,51 @@ DAILY_RESET_HOUR_UTC = 0  # Reset at midnight UTC
 LOG_DAILY_LIMITS = True
 LOG_DAILY_LIMIT_FILE = "daily_limits_log.jsonl"
 # Logs when daily limits are hit for analysis
+
+
+
+
+
+
+
+
+
+# Minimum fibonacci level for 5M CHoCH entry
+# 0.5 = 50%, 0.618 = 61.8%, etc.
+# For SELL: CHoCH must be from at least this level (e.g., 50% or higher)
+# For BUY: CHoCH must be from at most (1 - this level) (e.g., 50% or lower)
+MIN_FIB_LEVEL = 0.5  # Default 50%
+
+# Maximum price difference between 1M and 5M CHoCH (in pips)
+# This prevents 1M entries that are too far from the 5M signal
+MAX_1M_5M_PRICE_DIFF_PIPS = 20
+
+# Whether to use 1M CHoCH confirmation after 5M CHoCH
+USE_1M_ENTRY = True  # Set to False to only use 5M CHoCH
+
+# =============================================================================
+# EXAMPLE CONFIGURATIONS FOR DIFFERENT AGGRESSION LEVELS
+# =============================================================================
+
+# CONSERVATIVE (61.8% fib level, 1M confirmation required)
+CONSERVATIVE_CONFIG = {
+    'MIN_FIB_LEVEL': 0.618,
+    'USE_1M_ENTRY': True,
+    'MAX_1M_5M_PRICE_DIFF_PIPS': 15
+}
+
+# MODERATE (50% fib level, 1M confirmation optional)
+MODERATE_CONFIG = {
+    'MIN_FIB_LEVEL': 0.5,
+    'USE_1M_ENTRY': True,
+    'MAX_1M_5M_PRICE_DIFF_PIPS': 20
+}
+
+# AGGRESSIVE (38.2% fib level, no 1M confirmation)
+AGGRESSIVE_CONFIG = {
+    'MIN_FIB_LEVEL': 0.382,
+    'USE_1M_ENTRY': False,
+    'MAX_1M_5M_PRICE_DIFF_PIPS': 25
+}
+
+ENABLE_1M_ENTRY_SELL=True

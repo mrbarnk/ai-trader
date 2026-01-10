@@ -1,3 +1,4 @@
+# rules_engine.py
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -52,9 +53,7 @@ class OrderBlock:
     low: float
     created_time: datetime
     direction: BiasDirection  # Direction to trade FROM this OB (SELL from bearish OB, BUY from bullish OB)
-    target_price: float | None = None
     traded: bool = False
-    score: float = 0.0  # Score for profitability potential (higher = better)
     
     @property
     def mid(self) -> float:
@@ -259,56 +258,94 @@ class SignalEngine:
         swings_15m = find_swings(candles_15m, config.SWING_LEFT, config.SWING_RIGHT)
         events_15m = find_breaks(candles_15m, swings_15m)
         desired_dir = "bear" if direction == "SELL" else "bull"
-
-        # Build/refresh 15M OBs in the active 4H leg
-        for event in events_15m:
-            if event.time_utc < active_leg.start_time:
-                continue
-            if event.direction != desired_dir:
-                continue
-            if event.event_type not in ("CHoCH", "BOS"):
-                continue
-            structure_pos = active_leg.position(event.close_price)
-            if structure_pos is None:
-                continue
-            ob_zone = self._find_order_block(candles_15m, event, direction)
-            if not ob_zone:
-                continue
-            ob_exists = any(
-                abs(ob.created_time.timestamp() - event.time_utc.timestamp()) < 1
-                for ob in self.state.active_order_blocks
-            )
-            if ob_exists:
-                continue
-            ob_high, ob_low = ob_zone
-            ob = OrderBlock(
-                high=ob_high,
-                low=ob_low,
-                created_time=event.time_utc,
-                direction=direction,
-                target_price=event.break_level,
-                traded=False,
-            )
-            # Calculate score based on position in leg (deeper = better for profit)
-            if direction == "SELL":
-                ob.score = structure_pos  # Higher position (premium) = higher score
-            else:
-                ob.score = 1 - structure_pos  # Lower position (discount) = higher score
-            self.state.active_order_blocks.append(ob)
-            rules_passed.append("STEP_4_15M_OB_CREATED")
-
-        active_ob, ob_touch_time = self._find_touched_ob(
-            candles_5m, self.state.active_order_blocks, direction, active_leg.start_time
+        
+        # ✅ REMOVED: cross_time requirement - trade ALL 15M OBs in the 4H leg
+        # Old logic required price to reach 50% first, blocking early OBs
+        
+        # ✅ NEW: Look for ANY 15M BOS/CHoCH after 4H bias established
+        structure_event = self._latest_event_after_time(
+            events_15m, active_leg.start_time, desired_dir, ("BOS", "CHoCH")
         )
-        if active_ob is None or ob_touch_time is None:
-            return fail("STEP_4_15M_OB_NOT_TOUCHED")
-        reference_time = ob_touch_time
-        rules_passed.append("STEP_4_15M_OB_TOUCHED")
+
+        # Also check for weakness (optional alternative to CHoCH)
+        has_weakness, weakness_time = self._has_weakness(
+            candles_15m, active_leg.start_time, direction, active_leg
+        )
+
+        if structure_event is None and not has_weakness:
+            return fail("STEP_4_15M_NO_STRUCTURE_OR_WEAKNESS")
+
+        # Use structure if available (preferred), otherwise weakness
+        if structure_event:
+            reference_time = structure_event.time_utc
+            reference_price = structure_event.close_price
+            
+            if structure_event.event_type == "CHoCH":
+                rules_passed.append("STEP_4_15M_CHOCH_CONFIRMED")
+                # ✅ NEW: Create Order Block from this CHoCH
+                ob_zone = self._find_order_block(candles_15m, structure_event, direction)
+                if ob_zone:
+                    ob_high, ob_low = ob_zone
+                    
+                    # Check if we already have this OB
+                    ob_exists = any(
+                        abs(ob.created_time.timestamp() - structure_event.time_utc.timestamp()) < 1
+                        for ob in self.state.active_order_blocks
+                    )
+                    
+                    if not ob_exists:
+                        new_ob = OrderBlock(
+                            high=ob_high,
+                            low=ob_low,
+                            created_time=structure_event.time_utc,
+                            direction=direction,
+                            traded=False
+                        )
+                        self.state.active_order_blocks.append(new_ob)
+                        rules_passed.append("STEP_4_15M_OB_CREATED")
+            else:
+                rules_passed.append("STEP_4_15M_BOS_CONFIRMED")
+            
+            # Add check for body closed below/above the previous weak
+            previous_structure = self._previous_event_before_time(
+                events_15m, structure_event.time_utc, desired_dir, ("BOS", "CHoCH")
+            )
+            if previous_structure and previous_structure.break_level is not None:
+                if direction == "SELL":
+                    if reference_price >= previous_structure.break_level:
+                        return fail("STEP_4_NO_CLOSE_BELOW_PREV_WEAK")
+                else:
+                    if reference_price <= previous_structure.break_level:
+                        return fail("STEP_4_NO_CLOSE_ABOVE_PREV_WEAK")
+                rules_passed.append("STEP_4_CLOSE_BEYOND_PREV_WEAK")
+            
+        elif has_weakness:
+            reference_time = weakness_time
+            weakness_candle_idx = next(
+                i for i, c in enumerate(candles_15m) if c.time_utc == weakness_time
+            )
+            reference_price = candles_15m[weakness_candle_idx].close
+            rules_passed.append("STEP_4_15M_WEAKNESS_CONFIRMED")
+
+        # ✅ SIMPLIFIED: Trade every OB in the 4H leg (no premium/discount filter)
+        # Premium/discount was for 4H-based entries, not 15M OB strategy
+        structure_pos = active_leg.position(reference_price)
+        # if structure_pos is None:
+        #     return fail("STEP_4_15M_LOCATION_UNDEFINED")
+        
+        # # Only check if inside the 4H leg (allow 5% overshoot for wicks)
+        # if structure_pos < -0.20 or structure_pos > 1.20:  # Was -0.10/1.10
+        #     return fail("STEP_4_15M_OUTSIDE_LEG")
+        
+        if structure_pos is None:
+            return fail("STEP_4_15M_LOCATION_UNDEFINED")
+        rules_passed.append("STEP_4_15M_LOCATION_VALID")
+        rules_passed.append("STEP_4_15M_STRUCTURE_AFTER_CROSS")
 
         # STEP 5 — SKIP QUALITY FILTERS (TRADE EVERY SETUP)
         # Removed liquidity sweep requirements for maximum trade frequency
 
-        # STEP 6 — 5M TRIGGER CHECK (OB TAP REQUIRED)
+        # STEP 6 — 5M TRIGGER CHECK (SIMPLIFIED - NO OB RETEST REQUIRED)
         
         # ✅ ULTRA AGGRESSIVE: Enter on ANY 5M CHoCH in direction, with or without OB retest
         swings_5m = find_swings(candles_5m, config.SWING_LEFT, config.SWING_RIGHT)
@@ -336,7 +373,9 @@ class SignalEngine:
         rules_passed.append("STEP_6_5M_IN_4H_LEG")
 
         entry_event = choc_event
-        use_1m_entry = config.USE_1M_ENTRY
+        use_1m_entry = config.USE_1M_ENTRY and (
+            direction != "SELL" or config.ENABLE_1M_ENTRY_SELL
+        )
         if use_1m_entry:
             swings_1m = find_swings(
                 candles_1m or [], config.SWING_LEFT, config.SWING_RIGHT
@@ -363,19 +402,36 @@ class SignalEngine:
 
         entry_candles = candles_1m if use_1m_entry else candles_5m
         entry_candle = entry_candles[entry_event.index]
+        entry_high = entry_candle.high
+        entry_low = entry_candle.low
         if entry_event.break_level is None:
             return fail("STEP_6_ENTRY_BREAK_LEVEL_MISSING")
-        if not self._body_breaks_level(entry_candle, desired_dir, entry_event.break_level):
-            return fail("STEP_6_ENTRY_BODY_NOT_STRONG")
         entry_price = self._round_price(entry_event.break_level)
 
         # STEP 7 — STOP LOSS VALIDITY CHECK
         sl_buffer = config.SL_EXTRA_PIPS * config.PIP_SIZE
-        stop_loss = self._stop_from_weak_break(
-            entry_candles, entry_event, direction, entry_price, sl_buffer
-        )
-        if stop_loss is None:
-            return fail("STEP_7_SL_WEAK_RANGE_INVALID")
+
+        if direction == "SELL":
+            if entry_event.defining_swing_index is None:
+                return fail("STEP_7_SL_SWING_MISSING")
+            scan_start = entry_event.defining_swing_index
+            scan_end = entry_event.index + 1  # Include breaking candle
+            scan_candles = entry_candles[scan_start:scan_end]
+            structure_high = max(c.high for c in scan_candles)  # Highest point between defining and breaking
+            stop_loss = self._round_price(structure_high + sl_buffer)
+            if stop_loss <= entry_price:
+                return fail("STEP_7_SL_BELOW_ENTRY")
+        else:  # BUY
+            if entry_event.defining_swing_index is None:
+                return fail("STEP_7_SL_SWING_MISSING")
+            scan_start = entry_event.defining_swing_index
+            scan_end = entry_event.index + 1
+            scan_candles = entry_candles[scan_start:scan_end]
+            structure_low = min(c.low for c in scan_candles)  # Lowest point between
+            stop_loss = self._round_price(structure_low - sl_buffer)
+            if stop_loss >= entry_price:
+                return fail("STEP_7_SL_ABOVE_ENTRY")
+
         rules_passed.append("STEP_7_SL_VALID")
 
         choc_range_pips = self._choc_range_pips(entry_candles, entry_event)
@@ -397,40 +453,22 @@ class SignalEngine:
             rules_passed.append("STEP_7_RISK_SIZING_OK")
 
         # STEP 8 — TAKE PROFIT PLAN CHECK
-        structure_event = next(
-            (event for event in events_15m if event.time_utc == active_ob.created_time),
-            None,
-        )
-        if config.TP_LEG_SOURCE == "15M":
-            target_price = active_ob.target_price
-            if target_price is None:
-                return fail("STEP_8_TP_TARGET_MISSING")
-            tp1_price = self._round_price(target_price)
-            if direction == "SELL":
-                if tp1_price >= entry_price:
-                    return fail("STEP_8_TP_TARGET_INVALID")
+        tp_leg = self._resolve_tp_leg(active_leg, structure_event, candles_15m, direction)
+        if tp_leg is None:
+            if config.TP_LEG_FALLBACK_TO_4H:
+                tp_leg = active_leg
+                rules_passed.append("STEP_8_TP_LEG_FALLBACK_4H")
             else:
-                if tp1_price <= entry_price:
-                    return fail("STEP_8_TP_TARGET_INVALID")
-            tp2_price = tp1_price
-            plan_name = "STRUCTURE"
-            rules_passed.append("STEP_8_TP_PLAN_DEFINED")
-        else:
-            tp_leg = self._resolve_tp_leg(active_leg, structure_event, candles_15m, direction)
-            if tp_leg is None:
-                if config.TP_LEG_FALLBACK_TO_4H:
-                    tp_leg = active_leg
-                    rules_passed.append("STEP_8_TP_LEG_FALLBACK_4H")
-                else:
-                    return fail("STEP_8_TP_LEG_MISSING")
+                return fail("STEP_8_TP_LEG_MISSING")
 
-            take_profit_plan = self._validate_take_profit_plan(
-                direction, entry_price, tp_leg
-            )
-            if take_profit_plan is None:
-                return fail("STEP_8_TP_PLAN_MISSING")
-            plan_name, tp1_price, tp2_price = take_profit_plan
-            rules_passed.append("STEP_8_TP_PLAN_DEFINED")
+        take_profit_plan = self._validate_take_profit_plan(
+            direction, entry_price, tp_leg
+        )
+        if take_profit_plan is None:
+            return fail("STEP_8_TP_PLAN_MISSING")
+        plan_name, tp1_price, tp2_price = take_profit_plan
+        rules_passed.append("STEP_8_TP_PLAN_DEFINED")
+
         if config.TP3_ENABLED:
             tp3_leg = self._resolve_tp3_leg(
                 active_leg, structure_event, candles_15m, candles_d1, direction
@@ -450,8 +488,8 @@ class SignalEngine:
         # STEP 9 — FINAL CONSISTENCY CHECK
         rules_passed.append("STEP_9_FINAL_CONSISTENCY")
 
-        # Mark this OB as traded after a signal fires.
-        active_ob.traded = True
+        # ✅ Mark this OB as traded (allow retest later if price returns)
+        # active_ob.traded = True
 
         return self._build_output(
             decision="TRADE",
@@ -483,8 +521,8 @@ class SignalEngine:
         """
         Find the Order Block (last opposite candle before break)
         
-        For SELL: Find last BULLISH candle before bearish CHoCH
-        For BUY: Find last BEARISH candle before bullish CHoCH
+        For SELL: Find last bullish candle before bearish CHoCH
+        For BUY: Find last bearish candle before bullish CHoCH
         
         Returns: (ob_high, ob_low) or None
         """
@@ -496,13 +534,13 @@ class SignalEngine:
         
         if direction == "SELL":
             # Find last bullish candle (close > open)
-            for i in range(break_index - 1, -1, -1):  # Fixed: full lookback instead of limited to 10
+            for i in range(break_index - 1, max(0, break_index - 10), -1):
                 candle = candles[i]
                 if candle.close > candle.open:  # Bullish candle
                     return (candle.high, candle.low)
         else:
             # Find last bearish candle (close < open)
-            for i in range(break_index - 1, -1, -1):  # Fixed: full lookback instead of limited to 10
+            for i in range(break_index - 1, max(0, break_index - 10), -1):
                 candle = candles[i]
                 if candle.close < candle.open:  # Bearish candle
                     return (candle.high, candle.low)
@@ -525,49 +563,6 @@ class SignalEngine:
         ob_low = ob.low - tolerance
         
         return ob_low <= price <= ob_high
-
-    def _candle_touches_ob(
-        self, candle: Candle, ob: OrderBlock, tolerance_pips: float = 1.0
-    ) -> bool:
-        tolerance = tolerance_pips * config.PIP_SIZE
-        return candle.low <= ob.high + tolerance and candle.high >= ob.low - tolerance
-
-    def _find_touched_ob(
-        self,
-        candles: list[Candle],
-        order_blocks: list[OrderBlock],
-        direction: BiasDirection,
-        after_time: datetime,
-    ) -> tuple[OrderBlock | None, datetime | None]:
-        # Fixed: Collect all touched OBs, pick the one with highest score for max profit potential
-        touched_obs = []
-        for ob in order_blocks:
-            if ob.direction != direction:
-                continue
-            if ob.traded:
-                continue
-            touch_time = self._find_ob_touch_time(
-                candles, ob, max(after_time, ob.created_time)
-            )
-            if touch_time is not None:
-                touched_obs.append((ob, touch_time))
-        
-        if not touched_obs:
-            return None, None
-        
-        # Sort by score descending, then by recency (later created_time first)
-        touched_obs.sort(key=lambda x: (-x[0].score, -x[0].created_time.timestamp()))
-        return touched_obs[0]
-
-    def _find_ob_touch_time(
-        self, candles: list[Candle], ob: OrderBlock, after_time: datetime
-    ) -> datetime | None:
-        for candle in candles:
-            if candle.time_utc < after_time:
-                continue
-            if self._candle_touches_ob(candle, ob):
-                return candle.time_utc
-        return None
 
     def _find_active_ob_at_price(
         self,
@@ -595,55 +590,6 @@ class SignalEngine:
         
         return None
 
-    def _body_breaks_level(
-        self, candle: Candle, direction: BreakDirection, level: float
-    ) -> bool:
-        if direction == "bull":
-            return candle.open > level and candle.close > level
-        return candle.open < level and candle.close < level
-
-    def _stop_from_weak_break(
-        self,
-        candles: list[Candle],
-        entry_event: BreakEvent,
-        direction: BiasDirection,
-        entry_price: float,
-        sl_buffer: float,
-    ) -> float | None:
-        weak_index = entry_event.defining_swing_index
-        if weak_index is None:
-            weak_price = entry_event.defining_swing_price
-            if weak_price is None:
-                return None
-            if direction == "SELL":
-                swing_high = max(weak_price, candles[entry_event.index].high)
-                stop_loss = self._round_price(swing_high + sl_buffer)
-                if stop_loss <= entry_price:
-                    return None
-                return stop_loss
-            swing_low = min(weak_price, candles[entry_event.index].low)
-            stop_loss = self._round_price(swing_low - sl_buffer)
-            if stop_loss >= entry_price:
-                return None
-            return stop_loss
-
-        start = min(weak_index, entry_event.index)
-        end = max(weak_index, entry_event.index)
-        if start < 0 or end >= len(candles):
-            return None
-        window = candles[start : end + 1]
-        if direction == "SELL":
-            swing_high = max(candle.high for candle in window)
-            stop_loss = self._round_price(swing_high + sl_buffer)
-            if stop_loss <= entry_price:
-                return None
-            return stop_loss
-        swing_low = min(candle.low for candle in window)
-        stop_loss = self._round_price(swing_low - sl_buffer)
-        if stop_loss >= entry_price:
-            return None
-        return stop_loss
-
     def _update_4h_bias(self, candles_4h: list[Candle]) -> None:
         if not candles_4h:
             return
@@ -663,26 +609,31 @@ class SignalEngine:
             self.state.active_order_blocks.clear()
             return
 
-        last_event: BreakEvent | None = None
-        for event in reversed(events):
-            if event.defining_swing_price is None:
-                continue
-            candle = candles_4h[event.index]
-            if event.event_type == "CHoCH" and not self._body_breaks_level(
-                candle, event.direction, event.defining_swing_price
-            ):
-                continue
-            last_event = event
-            break
-        if last_event is None:
+        last_event = events[-1]
+        self.state.last_4h_event_type = last_event.event_type
+        if last_event.defining_swing_price is None:
             self.state.bias = None
             self.state.active_leg = None
-            self.state.last_4h_event_type = None
             self.state.last_4h_close_time = last_closed
             self.state.active_order_blocks.clear()
             return
 
-        self.state.last_4h_event_type = last_event.event_type
+        # Add strength filter for bias event candle
+        event_candle = candles_4h[last_event.index]
+        if last_event.direction == "bear":
+            is_strong = (event_candle.close < event_candle.open) and (
+                (event_candle.open - event_candle.close) / (event_candle.high - event_candle.low) > 0.5
+            )
+        else:  # bull
+            is_strong = (event_candle.close > event_candle.open) and (
+                (event_candle.close - event_candle.open) / (event_candle.high - event_candle.low) > 0.5
+            )
+        if not is_strong:
+            self.state.bias = None
+            self.state.active_leg = None
+            self.state.active_order_blocks.clear()
+            self.state.last_4h_close_time = last_closed
+            return
 
         if last_event.direction == "bull":
             invalidated = any(
@@ -809,6 +760,23 @@ class SignalEngine:
     ) -> BreakEvent | None:
         for event in reversed(events):
             if event.time_utc < after_time:
+                continue
+            if event.direction != direction:
+                continue
+            if event.event_type not in event_types:
+                continue
+            return event
+        return None
+
+    def _previous_event_before_time(
+        self,
+        events: list[BreakEvent],
+        before_time: datetime,
+        direction: BreakDirection,
+        event_types: tuple[str, ...],
+    ) -> BreakEvent | None:
+        for event in reversed(events):
+            if event.time_utc >= before_time:
                 continue
             if event.direction != direction:
                 continue

@@ -271,10 +271,18 @@ class SignalEngine:
             current_time=now_utc,
             lookback_hours=72
         )
-        
+        current_price = candles_5m[-1].close
+        max_distance_pips = 150  # Only keep OBs within 150 pips
+
+        relevant_enhanced_obs = []
+        for eob in enhanced_obs:
+            distance_to_ob = min(abs(current_price - eob.high), abs(current_price - eob.low)) / config.PIP_SIZE
+            if distance_to_ob <= max_distance_pips:
+                relevant_enhanced_obs.append(eob)
+                
         # Convert to your OrderBlock format and add to state
         new_count = 0
-        for eob in enhanced_obs:
+        for eob in relevant_enhanced_obs:
             ob_exists = any(
                 abs(existing.created_time.timestamp() - eob.created_time.timestamp()) < 60
                 for existing in self.state.active_order_blocks
@@ -523,7 +531,7 @@ class SignalEngine:
         return ob_low <= price <= ob_high
 
     def _candle_touches_ob(
-        self, candle: Candle, ob: OrderBlock, tolerance_pips: float = 1.0
+        self, candle: Candle, ob: OrderBlock, tolerance_pips: float = 10.0
     ) -> bool:
         tolerance = tolerance_pips * config.PIP_SIZE
         return candle.low <= ob.high + tolerance and candle.high >= ob.low - tolerance

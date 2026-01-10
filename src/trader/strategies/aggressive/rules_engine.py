@@ -259,38 +259,38 @@ class SignalEngine:
         events_15m = find_breaks(candles_15m, swings_15m)
         desired_dir = "bear" if direction == "SELL" else "bull"
 
-        # Build/refresh 15M OBs in the active 4H leg
-        for event in events_15m:
-            if event.time_utc < active_leg.start_time:
-                continue
-            if event.direction != desired_dir:
-                continue
-            if event.event_type not in ("CHoCH", "BOS"):
-                continue
-            structure_pos = active_leg.position(event.close_price)
-            if structure_pos is None:
-                continue
-            ob_zone = self._find_order_block(candles_15m, event, direction)
-            if not ob_zone:
-                continue
+
+        # Enhanced order block detection
+        detector = EnhancedOrderBlockDetector()
+        enhanced_obs = detector.find_all_order_blocks(
+            candles=candles_15m,
+            events=events_15m,
+            direction=direction,
+            active_leg=active_leg,
+            current_time=now_utc,
+            lookback_hours=72
+        )
+        
+        # Convert to your OrderBlock format and add to state
+        new_count = 0
+        for eob in enhanced_obs:
             ob_exists = any(
-                abs(ob.created_time.timestamp() - event.time_utc.timestamp()) < 1
-                for ob in self.state.active_order_blocks
+                abs(existing.created_time.timestamp() - eob.created_time.timestamp()) < 60
+                for existing in self.state.active_order_blocks
             )
-            if ob_exists:
-                continue
-            ob_high, ob_low = ob_zone
-            self.state.active_order_blocks.append(
-                OrderBlock(
-                    high=ob_high,
-                    low=ob_low,
-                    created_time=event.time_utc,
-                    direction=direction,
-                    target_price=event.break_level,
-                    traded=False,
-                )
-            )
-            rules_passed.append("STEP_4_15M_OB_CREATED")
+            if not ob_exists:
+                self.state.active_order_blocks.append(OrderBlock(
+                    high=eob.high,
+                    low=eob.low,
+                    created_time=eob.created_time,
+                    direction=eob.direction,
+                    target_price=eob.target_price,
+                    traded=False
+                ))
+                new_count += 1
+        
+        if new_count > 0:
+            rules_passed.append(f"STEP_4_ENHANCED_OB_CREATED_{new_count}")
 
         active_ob, ob_touch_time = self._find_touched_ob(
             candles_5m, self.state.active_order_blocks, direction, active_leg.start_time

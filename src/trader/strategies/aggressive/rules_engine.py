@@ -292,13 +292,18 @@ class SignalEngine:
             )
             rules_passed.append("STEP_4_15M_OB_CREATED")
 
-        active_ob, ob_touch_time = self._find_touched_ob(
-            candles_5m, self.state.active_order_blocks, direction, active_leg.start_time
+        active_ob = next(
+            (
+                ob
+                for ob in reversed(self.state.active_order_blocks)
+                if ob.direction == direction and not ob.traded
+            ),
+            None,
         )
-        if active_ob is None or ob_touch_time is None:
-            return fail("STEP_4_15M_OB_NOT_TOUCHED")
-        reference_time = ob_touch_time
-        rules_passed.append("STEP_4_15M_OB_TOUCHED")
+        if active_ob is None:
+            return fail("STEP_4_15M_OB_MISSING")
+        reference_time = active_ob.created_time
+        rules_passed.append("STEP_4_15M_OB_SELECTED")
 
         # STEP 5 — SKIP QUALITY FILTERS (TRADE EVERY SETUP)
         # Removed liquidity sweep requirements for maximum trade frequency
@@ -329,6 +334,17 @@ class SignalEngine:
         #     return fail("STEP_6_5M_OUTSIDE_LEG")
         
         rules_passed.append("STEP_6_5M_IN_4H_LEG")
+
+        premium_threshold = (
+            config.PREMIUM_CROSS_LEVEL if direction == "SELL" else config.DISCOUNT_CROSS_LEVEL
+        )
+        if direction == "SELL":
+            if choc_pos < premium_threshold:
+                return fail("STEP_6_5M_PREMIUM_THRESHOLD")
+        else:
+            if choc_pos > premium_threshold:
+                return fail("STEP_6_5M_PREMIUM_THRESHOLD")
+        rules_passed.append("STEP_6_5M_PREMIUM_OK")
 
         entry_event = choc_event
         use_1m_entry = config.USE_1M_ENTRY

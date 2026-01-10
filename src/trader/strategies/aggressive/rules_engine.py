@@ -352,7 +352,7 @@ class SignalEngine:
 
         entry_event = choc_event
         use_1m_entry = config.USE_1M_ENTRY and (
-            direction != "SELL" or config.ENABLE_1M_ENTRY_SELL
+            direction != "SELL" or config.USE_1M_ENTRY
         )
         if use_1m_entry:
             swings_1m = find_swings(

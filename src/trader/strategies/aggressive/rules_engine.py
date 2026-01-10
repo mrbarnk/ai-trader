@@ -10,6 +10,7 @@ from ...models import Candle
 from ...structure import BreakEvent, BreakDirection, find_breaks, find_swings, has_liquidity_sweep
 from ...time_utils import session_from_utc
 from ...timeframes import TIMEFRAME_H4, TIMEFRAME_M15, TIMEFRAME_M5, TIMEFRAME_M1, TIMEFRAME_D1
+from .enhanced_order_blocks import EnhancedOrderBlockDetector, EnhancedOrderBlock, OrderBlockQuality
 
 
 BiasDirection = Literal["BUY", "SELL"]

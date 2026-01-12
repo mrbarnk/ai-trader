@@ -5,11 +5,11 @@ from datetime import datetime
 import math
 from typing import Literal, Protocol
 
-from ... import config
-from ...models import Candle
-from ...structure import BreakEvent, BreakDirection, find_breaks, find_swings, has_liquidity_sweep
-from ...time_utils import session_from_utc
-from ...timeframes import TIMEFRAME_H4, TIMEFRAME_M15, TIMEFRAME_M5, TIMEFRAME_M1, TIMEFRAME_D1
+from . import config
+from .models import Candle
+from .structure import BreakEvent, BreakDirection, find_breaks, find_swings, has_liquidity_sweep
+from .time_utils import session_from_utc
+from .timeframes import TIMEFRAME_H4, TIMEFRAME_M15, TIMEFRAME_M5, TIMEFRAME_M1, TIMEFRAME_D1
 
 
 BiasDirection = Literal["BUY", "SELL"]
@@ -352,7 +352,7 @@ class SignalEngine:
 
         entry_event = choc_event
         use_1m_entry = config.USE_1M_ENTRY and (
-            direction != "SELL" or config.USE_1M_ENTRY
+            direction != "SELL" or config.ENABLE_1M_ENTRY_SELL
         )
         if use_1m_entry:
             swings_1m = find_swings(
